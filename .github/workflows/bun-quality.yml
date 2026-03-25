@@ -114,13 +114,18 @@ jobs:
       - name: "G2: Install gitleaks"
         if: inputs.enable-security == 'true'
         run: |
-          GITLEAKS_VERSION="8.24.3"
+          GITLEAKS_VERSION="8.30.1"
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             | tar xz -C /usr/local/bin gitleaks
 
       - name: "G2: Gitleaks detect"
         if: inputs.enable-security == 'true'
-        run: gitleaks detect --no-git --no-banner --verbose
+        run: |
+          GITLEAKS_ARGS="detect --no-git --no-banner --verbose"
+          if [ -f ".gitleaks.toml" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=.gitleaks.toml"
+          fi
+          gitleaks $GITLEAKS_ARGS
 
       - name: Pre-command
         if: inputs.pre-command != ''
@@ -150,7 +155,7 @@ jobs:
       - name: "G2: Install osv-scanner"
         if: inputs.enable-security == 'true'
         run: |
-          OSV_VERSION="2.3.3"
+          OSV_VERSION="2.3.5"
           curl -sSfL -o /usr/local/bin/osv-scanner \
             "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_${OSV_VERSION}_linux_amd64"
           chmod +x /usr/local/bin/osv-scanner

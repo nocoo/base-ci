@@ -110,6 +110,18 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # G2: Secrets scanning (before pre-command to avoid build artifact false positives)
+      - name: "G2: Install gitleaks"
+        if: inputs.enable-security == 'true'
+        run: |
+          GITLEAKS_VERSION="8.24.3"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /usr/local/bin gitleaks
+
+      - name: "G2: Gitleaks detect"
+        if: inputs.enable-security == 'true'
+        run: gitleaks detect --no-git --no-banner --verbose
+
       - name: Pre-command
         if: inputs.pre-command != ''
         run: ${{ inputs.pre-command }}
@@ -133,18 +145,6 @@ jobs:
           path: ${{ inputs.coverage-path }}
           retention-days: 7
           if-no-files-found: ignore
-
-      # G2: Secrets scanning
-      - name: "G2: Install gitleaks"
-        if: inputs.enable-security == 'true'
-        run: |
-          GITLEAKS_VERSION="8.24.3"
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar xz -C /usr/local/bin gitleaks
-
-      - name: "G2: Gitleaks detect"
-        if: inputs.enable-security == 'true'
-        run: gitleaks detect --no-git --no-banner --verbose
 
       # G2: Dependency vulnerability scanning
       - name: "G2: Install osv-scanner"

@@ -1,0 +1,262 @@
+# Reusable CI workflow for Bun/TypeScript projects.
+# Implements the 6-dimension quality system: L1/G1/G2 (always), L2/L3 (opt-in).
+#
+# Usage from a caller repo:
+#   jobs:
+#     ci:
+#       uses: nocoo/ci/.github/workflows/bun-quality.yml@main
+#       with:
+#         bun-version: "1.3.11"
+#       secrets: inherit
+
+name: Bun Quality Gate
+
+on:
+  workflow_call:
+    inputs:
+      # Runtime
+      bun-version:
+        description: "Bun version (e.g. '1.3.11' or 'latest')"
+        type: string
+        default: "latest"
+
+      # Pre-step (runs once before all checks)
+      pre-command:
+        description: "Optional setup command (e.g. 'bun run build' for Next.js route types)"
+        type: string
+        default: ""
+
+      # L1: Unit tests
+      test-command:
+        description: "Unit test command with coverage"
+        type: string
+        default: "bun run test:unit:coverage"
+
+      # G1: Static analysis
+      lint-command:
+        description: "Lint command"
+        type: string
+        default: "bun run lint"
+      typecheck-command:
+        description: "Type-check command"
+        type: string
+        default: "bun run typecheck"
+
+      # G2: Security scanning
+      enable-security:
+        description: "Enable gitleaks + osv-scanner ('true'/'false')"
+        type: string
+        default: "true"
+      osv-lockfile:
+        description: "Lockfile path for osv-scanner"
+        type: string
+        default: "bun.lock"
+      osv-config:
+        description: "Path to .osv-scanner.toml (empty = no config)"
+        type: string
+        default: ""
+
+      # L2: API E2E (opt-in)
+      enable-l2:
+        description: "Enable L2 API E2E tests ('true'/'false')"
+        type: string
+        default: "false"
+      l2-command:
+        description: "L2 test command"
+        type: string
+        default: "bun run test:api"
+
+      # L3: Playwright E2E (opt-in)
+      enable-l3:
+        description: "Enable L3 Playwright E2E tests ('true'/'false')"
+        type: string
+        default: "false"
+      l3-command:
+        description: "L3 test command"
+        type: string
+        default: "bun x playwright test"
+
+      # Coverage artifact
+      upload-coverage:
+        description: "Upload coverage artifact ('true'/'false')"
+        type: string
+        default: "true"
+      coverage-path:
+        description: "Coverage output directory"
+        type: string
+        default: "coverage"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────
+  # L1 + G1 + G2 — always runs
+  # ─────────────────────────────────────────────────────
+  quality-gate:
+    name: "L1+G1+G2"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for gitleaks
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pre-command
+        if: inputs.pre-command != ''
+        run: ${{ inputs.pre-command }}
+
+      # G1: Static analysis
+      - name: "G1: Typecheck"
+        run: ${{ inputs.typecheck-command }}
+
+      - name: "G1: Lint"
+        run: ${{ inputs.lint-command }}
+
+      # L1: Unit tests
+      - name: "L1: Unit tests"
+        run: ${{ inputs.test-command }}
+
+      - name: Upload coverage
+        if: inputs.upload-coverage == 'true' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: ${{ inputs.coverage-path }}
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # G2: Secrets scanning
+      - name: "G2: Install gitleaks"
+        if: inputs.enable-security == 'true'
+        run: |
+          GITLEAKS_VERSION="8.24.3"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /usr/local/bin gitleaks
+
+      - name: "G2: Gitleaks detect"
+        if: inputs.enable-security == 'true'
+        run: gitleaks detect --no-banner --verbose
+
+      # G2: Dependency vulnerability scanning
+      - name: "G2: Install osv-scanner"
+        if: inputs.enable-security == 'true'
+        run: |
+          OSV_VERSION="2.3.3"
+          curl -sSfL -o /usr/local/bin/osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_${OSV_VERSION}_linux_amd64"
+          chmod +x /usr/local/bin/osv-scanner
+
+      - name: "G2: OSV dependency scan"
+        if: inputs.enable-security == 'true'
+        run: |
+          OSV_ARGS="scan --lockfile=${{ inputs.osv-lockfile }}"
+          if [ -n "${{ inputs.osv-config }}" ]; then
+            OSV_ARGS="$OSV_ARGS --config=${{ inputs.osv-config }}"
+          fi
+          osv-scanner $OSV_ARGS
+
+  # ─────────────────────────────────────────────────────
+  # L2: API End-to-End Tests (opt-in)
+  # ─────────────────────────────────────────────────────
+  api-e2e:
+    name: "L2 API E2E"
+    if: inputs.enable-l2 == 'true'
+    needs: [quality-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pre-command
+        if: inputs.pre-command != ''
+        run: ${{ inputs.pre-command }}
+
+      - name: "L2: API E2E tests"
+        run: ${{ inputs.l2-command }}
+        env:
+          CI: "true"
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          D1_TEST_DATABASE_ID: ${{ secrets.D1_TEST_DATABASE_ID }}
+          R2_TEST_BUCKET_NAME: ${{ secrets.R2_TEST_BUCKET_NAME }}
+          R2_TEST_PUBLIC_DOMAIN: ${{ secrets.R2_TEST_PUBLIC_DOMAIN }}
+          KV_TEST_NAMESPACE_ID: ${{ secrets.KV_TEST_NAMESPACE_ID }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+
+  # ─────────────────────────────────────────────────────
+  # L3: Playwright Browser E2E (opt-in)
+  # ─────────────────────────────────────────────────────
+  playwright:
+    name: "L3 Playwright E2E"
+    if: inputs.enable-l3 == 'true'
+    needs: [quality-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pre-command
+        if: inputs.pre-command != ''
+        run: ${{ inputs.pre-command }}
+
+      - name: Install Playwright browsers
+        run: bunx playwright install chromium --with-deps
+
+      - name: "L3: Playwright E2E tests"
+        run: ${{ inputs.l3-command }}
+        env:
+          CI: "true"
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          D1_TEST_DATABASE_ID: ${{ secrets.D1_TEST_DATABASE_ID }}
+          R2_TEST_BUCKET_NAME: ${{ secrets.R2_TEST_BUCKET_NAME }}
+          R2_TEST_PUBLIC_DOMAIN: ${{ secrets.R2_TEST_PUBLIC_DOMAIN }}
+          KV_TEST_NAMESPACE_ID: ${{ secrets.KV_TEST_NAMESPACE_ID }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -206,6 +206,7 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_TEST_BUCKET_NAME: ${{ secrets.R2_TEST_BUCKET_NAME }}
           R2_TEST_PUBLIC_DOMAIN: ${{ secrets.R2_TEST_PUBLIC_DOMAIN }}
+          R2_USER_HASH_SALT: ${{ secrets.R2_USER_HASH_SALT }}
           KV_TEST_NAMESPACE_ID: ${{ secrets.KV_TEST_NAMESPACE_ID }}
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
 
@@ -249,10 +250,9 @@ jobs:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_TEST_BUCKET_NAME: ${{ secrets.R2_TEST_BUCKET_NAME }}
           R2_TEST_PUBLIC_DOMAIN: ${{ secrets.R2_TEST_PUBLIC_DOMAIN }}
+          R2_USER_HASH_SALT: ${{ secrets.R2_USER_HASH_SALT }}
           KV_TEST_NAMESPACE_ID: ${{ secrets.KV_TEST_NAMESPACE_ID }}
-          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-
-      - name: Upload Playwright report
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}      - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:

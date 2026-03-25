@@ -157,7 +157,7 @@ jobs:
         run: |
           OSV_VERSION="2.3.5"
           curl -sSfL -o /usr/local/bin/osv-scanner \
-            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_${OSV_VERSION}_linux_amd64"
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
           chmod +x /usr/local/bin/osv-scanner
 
       - name: "G2: OSV dependency scan"

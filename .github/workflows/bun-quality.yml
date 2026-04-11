@@ -185,13 +185,6 @@ jobs:
         if: inputs.pre-command != ''
         run: ${{ inputs.pre-command }}
 
-      - name: "L2: Test worker connectivity"
-        run: |
-          echo "Testing worker at $WORKER_URL..."
-          curl -sf "$WORKER_URL/api/v1/health" || echo "Worker health check failed"
-        env:
-          WORKER_URL: ${{ secrets.WORKER_URL }}
-
       - name: "L2: API E2E tests"
         run: ${{ inputs.l2-command }}
         env:

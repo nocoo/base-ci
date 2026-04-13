@@ -1,0 +1,41 @@
+name: Self Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Validate workflow syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate YAML
+        run: |
+          python3 -c "
+          import yaml, sys
+          with open('.github/workflows/bun-quality.yml') as f:
+              try:
+                  yaml.safe_load(f)
+                  print('✅ bun-quality.yml is valid YAML')
+              except yaml.YAMLError as e:
+                  print(f'❌ Invalid YAML: {e}')
+                  sys.exit(1)
+          "
+      - name: Check workflow structure
+        run: |
+          python3 -c "
+          import yaml, sys
+          with open('.github/workflows/bun-quality.yml') as f:
+              wf = yaml.safe_load(f)
+          assert 'on' in wf, 'Missing on: trigger'
+          assert 'workflow_call' in wf['on'], 'Missing workflow_call trigger'
+          assert 'jobs' in wf, 'Missing jobs'
+          print('✅ Workflow structure valid')
+          print(f'  Triggers: {list(wf[\"on\"].keys())}')
+          print(f'  Jobs: {list(wf[\"jobs\"].keys())}')
+          print(f'  Inputs: {len(wf[\"on\"][\"workflow_call\"].get(\"inputs\", {}))}')
+          "

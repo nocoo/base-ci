@@ -39,6 +39,10 @@ on:
         description: "Comma-separated subdirectories that need their own bun install (e.g. 'worker' or 'worker,dashboard'). Each runs after the main install."
         type: string
         default: ""
+      trusted-native-deps:
+        description: "Comma-separated list of packages whose lifecycle scripts must run even when ignore-scripts is true. Used to restore native bindings (better-sqlite3, sharp, etc.) while keeping Shai-Hulud defense for everything else. Only applies to the top-level install, not extra-install-dirs subdirs."
+        type: string
+        default: ""
 
       # Pre-step (runs once before all checks)
       pre-command:
@@ -148,6 +152,22 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
+      - name: Trust native deps
+        if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra PKGS <<< "${{ inputs.trusted-native-deps }}"
+          ARGS=()
+          for p in "${PKGS[@]}"; do
+            p_trim="$(echo "$p" | xargs)"
+            [ -n "$p_trim" ] && ARGS+=("$p_trim")
+          done
+          if [ ${#ARGS[@]} -gt 0 ]; then
+            echo "::group::bun pm trust ${ARGS[*]}"
+            bun pm trust "${ARGS[@]}"
+            echo "::endgroup::"
+          fi
+
       - name: Install extra dirs
         if: inputs.extra-install-dirs != ''
         shell: bash
@@ -244,6 +264,22 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
+      - name: Trust native deps
+        if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra PKGS <<< "${{ inputs.trusted-native-deps }}"
+          ARGS=()
+          for p in "${PKGS[@]}"; do
+            p_trim="$(echo "$p" | xargs)"
+            [ -n "$p_trim" ] && ARGS+=("$p_trim")
+          done
+          if [ ${#ARGS[@]} -gt 0 ]; then
+            echo "::group::bun pm trust ${ARGS[*]}"
+            bun pm trust "${ARGS[@]}"
+            echo "::endgroup::"
+          fi
+
       - name: Install extra dirs
         if: inputs.extra-install-dirs != ''
         shell: bash
@@ -289,6 +325,22 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+
+      - name: Trust native deps
+        if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra PKGS <<< "${{ inputs.trusted-native-deps }}"
+          ARGS=()
+          for p in "${PKGS[@]}"; do
+            p_trim="$(echo "$p" | xargs)"
+            [ -n "$p_trim" ] && ARGS+=("$p_trim")
+          done
+          if [ ${#ARGS[@]} -gt 0 ]; then
+            echo "::group::bun pm trust ${ARGS[*]}"
+            bun pm trust "${ARGS[@]}"
+            echo "::endgroup::"
+          fi
 
       - name: Install extra dirs
         if: inputs.extra-install-dirs != ''
@@ -337,6 +389,22 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+
+      - name: Trust native deps
+        if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra PKGS <<< "${{ inputs.trusted-native-deps }}"
+          ARGS=()
+          for p in "${PKGS[@]}"; do
+            p_trim="$(echo "$p" | xargs)"
+            [ -n "$p_trim" ] && ARGS+=("$p_trim")
+          done
+          if [ ${#ARGS[@]} -gt 0 ]; then
+            echo "::group::bun pm trust ${ARGS[*]}"
+            bun pm trust "${ARGS[@]}"
+            echo "::endgroup::"
+          fi
 
       - name: Install extra dirs
         if: inputs.extra-install-dirs != ''

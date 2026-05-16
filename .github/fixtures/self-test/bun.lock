@@ -1,0 +1,18 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "base-ci-self-test-fixture",
+      "dependencies": {
+        "self-test-marker": "file:./marker-pkg",
+      },
+    },
+  },
+  "trustedDependencies": [
+    "self-test-marker",
+  ],
+  "packages": {
+    "self-test-marker": ["self-test-marker@file:marker-pkg", {}],
+  }
+}

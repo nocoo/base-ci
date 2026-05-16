@@ -36,8 +36,83 @@ jobs:
           on_key = wf.get(True) or wf.get('on')
           assert 'workflow_call' in on_key, 'Missing workflow_call trigger'
           assert 'jobs' in wf, 'Missing jobs'
+          inputs = on_key['workflow_call'].get('inputs', {})
+          for required in ('ignore-scripts', 'extra-install-dirs'):
+              assert required in inputs, f'Missing input: {required}'
+          assert inputs['ignore-scripts']['type'] == 'boolean'
+          assert inputs['ignore-scripts']['default'] is False
+          assert inputs['extra-install-dirs']['type'] == 'string'
+          assert inputs['extra-install-dirs']['default'] == ''
           print('✅ Workflow structure valid')
           print(f'  Triggers: {list(on_key.keys())}')
           print(f'  Jobs: {list(wf[\"jobs\"].keys())}')
-          print(f'  Inputs: {len(on_key[\"workflow_call\"].get(\"inputs\", {}))}')
+          print(f'  Inputs: {len(inputs)}')
           "
+
+  # Behavior coverage for the v2026.2 hardening inputs.
+  #
+  # The fixture under .github/fixtures/self-test/ pulls a local
+  # `self-test-marker` package whose postinstall writes a sentinel file
+  # at $MARKER_FILE. Running `bun install --ignore-scripts` against the
+  # fixture must NOT create that file; the same recipe without the flag
+  # MUST create it. That gives us a direct proof that the recipe used by
+  # bun-quality.yml actually suppresses lifecycle scripts.
+  hardening:
+    name: "Hardening: ignore-scripts + extra-install-dirs"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MARKER_FILE: ${{ runner.temp }}/self-test-marker
+    defaults:
+      run:
+        working-directory: .github/fixtures/self-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Reset marker
+        run: rm -f "$MARKER_FILE"
+
+      - name: Negative control — install without --ignore-scripts
+        run: bun install --frozen-lockfile
+
+      - name: Assert postinstall ran in the negative control
+        shell: bash
+        run: |
+          if [ ! -f "$MARKER_FILE" ]; then
+            echo "❌ negative control failed: marker missing, fixture is broken"
+            exit 1
+          fi
+          echo "✅ negative control: postinstall ran as expected"
+
+      - name: Reset fixture for the hardened run
+        shell: bash
+        run: |
+          rm -rf node_modules worker/node_modules
+          rm -f "$MARKER_FILE"
+
+      - name: Install fixture with --ignore-scripts (mirrors bun-quality.yml)
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install extra dirs (mirrors bun-quality.yml extra-install-dirs loop)
+        shell: bash
+        run: |
+          IFS=',' read -ra DIRS <<< "worker"
+          for d in "${DIRS[@]}"; do
+            d_trim="$(echo "$d" | xargs)"
+            echo "::group::bun install in $d_trim"
+            (cd "$d_trim" && bun install --frozen-lockfile --ignore-scripts)
+            echo "::endgroup::"
+          done
+
+      - name: Assert --ignore-scripts skipped both installs
+        shell: bash
+        run: |
+          if [ -f "$MARKER_FILE" ]; then
+            echo "❌ marker exists — postinstall ran despite --ignore-scripts"
+            exit 1
+          fi
+          echo "✅ --ignore-scripts suppressed lifecycle scripts in main + worker"

@@ -1,0 +1,10 @@
+{
+  "name": "base-ci-self-test-fixture-worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sub-fixture for extra-install-dirs coverage. Same marker package so we can also assert worker subdir install honored --ignore-scripts.",
+  "dependencies": {
+    "self-test-marker": "file:../marker-pkg"
+  },
+  "trustedDependencies": ["self-test-marker"]
+}

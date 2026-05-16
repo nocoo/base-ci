@@ -35,6 +35,10 @@ on:
         description: "Pass --ignore-scripts to all bun install steps (defense against Shai-Hulud-style supply-chain worms). Requires consumer repo to set trustedDependencies in package.json."
         type: boolean
         default: false
+      extra-install-dirs:
+        description: "Comma-separated subdirectories that need their own bun install (e.g. 'worker' or 'worker,dashboard'). Each runs after the main install."
+        type: string
+        default: ""
 
       # Pre-step (runs once before all checks)
       pre-command:
@@ -144,6 +148,18 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
+      - name: Install extra dirs
+        if: inputs.extra-install-dirs != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra DIRS <<< "${{ inputs.extra-install-dirs }}"
+          for d in "${DIRS[@]}"; do
+            d_trim="$(echo "$d" | xargs)"
+            echo "::group::bun install in $d_trim"
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            echo "::endgroup::"
+          done
+
       # G2: Secrets scanning (before pre-command to avoid build artifact false positives)
       - name: "G2: Install gitleaks"
         if: inputs.enable-security == 'true'
@@ -228,6 +244,18 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
+      - name: Install extra dirs
+        if: inputs.extra-install-dirs != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra DIRS <<< "${{ inputs.extra-install-dirs }}"
+          for d in "${DIRS[@]}"; do
+            d_trim="$(echo "$d" | xargs)"
+            echo "::group::bun install in $d_trim"
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            echo "::endgroup::"
+          done
+
       - name: Pre-command
         if: inputs.pre-command != ''
         run: ${{ inputs.pre-command }}
@@ -261,6 +289,18 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+
+      - name: Install extra dirs
+        if: inputs.extra-install-dirs != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra DIRS <<< "${{ inputs.extra-install-dirs }}"
+          for d in "${DIRS[@]}"; do
+            d_trim="$(echo "$d" | xargs)"
+            echo "::group::bun install in $d_trim"
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            echo "::endgroup::"
+          done
 
       - name: Install Playwright browsers
         run: bunx playwright install --with-deps ${{ inputs.l3-browser }}
@@ -297,6 +337,18 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+
+      - name: Install extra dirs
+        if: inputs.extra-install-dirs != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra DIRS <<< "${{ inputs.extra-install-dirs }}"
+          for d in "${DIRS[@]}"; do
+            d_trim="$(echo "$d" | xargs)"
+            echo "::group::bun install in $d_trim"
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            echo "::endgroup::"
+          done
 
       - name: "Worker: Unit tests"
         run: ${{ inputs.worker-command }}

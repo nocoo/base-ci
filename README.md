@@ -152,6 +152,8 @@ jobs:
 |-------|---------|-------------|
 | `bun-version` | `"latest"` | Bun version (e.g., `"1.3.11"`) |
 | `pre-command` | `""` | Setup command before tests (e.g., `"bun run build"`) |
+| `ignore-scripts` | `false` | Pass `--ignore-scripts` to every `bun install` step (see **Hardening** below) |
+| `extra-install-dirs` | `""` | Comma-separated subdirs that need their own `bun install` (e.g. `"worker"` or `"worker,dashboard"`) |
 
 ### L1: Unit Tests
 
@@ -198,6 +200,40 @@ jobs:
 | `enable-worker` | `"false"` | Enable Worker tests |
 | `worker-command` | `"bun run test"` | Worker test command |
 | `worker-directory` | `"worker"` | Worker project directory |
+
+## Hardening (recommended)
+
+Since v2026.2, `bun-quality.yml` ships two opt-in inputs that harden CI against npm supply-chain attacks (Shai-Hulud-style worms that piggyback on lifecycle scripts):
+
+```yaml
+jobs:
+  quality:
+    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.2
+    with:
+      ignore-scripts: true
+      extra-install-dirs: "worker"
+    secrets: inherit
+```
+
+### `ignore-scripts: true`
+
+Forwards `--ignore-scripts` to every `bun install --frozen-lockfile` step. Postinstall hooks for compromised packages cannot run, even if a malicious version is pinned in `bun.lock`.
+
+This **only works** if your consumer repo declares every native package whose postinstall must still run in `package.json#trustedDependencies`:
+
+```json
+{
+  "trustedDependencies": ["esbuild", "sharp", "better-sqlite3"]
+}
+```
+
+Common entries: `esbuild`, `sharp`, `better-sqlite3`, `unrs-resolver`, `@swc/core`, the Next.js `@next/swc-*` binary. If a native dependency is missing from `trustedDependencies` while `ignore-scripts: true` is on, builds will fail with a missing-binary error — that is the signal to add it (vetted) to the list.
+
+### `extra-install-dirs: "worker"` (or `"worker,dashboard"`)
+
+After the main `bun install`, each job recurses into every comma-separated subdirectory and runs `bun install --frozen-lockfile` there (inheriting the `ignore-scripts` flag). Use for repos with fixed sub-trees that have their own lockfile, like Cloudflare Worker subprojects or standalone dashboards.
+
+The step is a no-op when the input is `""` (default), so this is safe to set globally.
 
 ## Architecture
 

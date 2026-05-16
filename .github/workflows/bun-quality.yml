@@ -30,6 +30,12 @@ on:
         type: string
         default: "latest"
 
+      # Hardening: lifecycle-script isolation (Shai-Hulud / npm supply-chain defense)
+      ignore-scripts:
+        description: "Pass --ignore-scripts to all bun install steps (defense against Shai-Hulud-style supply-chain worms). Requires consumer repo to set trustedDependencies in package.json."
+        type: boolean
+        default: false
+
       # Pre-step (runs once before all checks)
       pre-command:
         description: "Optional setup command (e.g. 'bun run build' for Next.js route types)"
@@ -136,7 +142,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
       # G2: Secrets scanning (before pre-command to avoid build artifact false positives)
       - name: "G2: Install gitleaks"
@@ -220,7 +226,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
       - name: Pre-command
         if: inputs.pre-command != ''
@@ -254,7 +260,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
       - name: Install Playwright browsers
         run: bunx playwright install --with-deps ${{ inputs.l3-browser }}
@@ -290,7 +296,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
 
       - name: "Worker: Unit tests"
         run: ${{ inputs.worker-command }}

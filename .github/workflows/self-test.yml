@@ -61,8 +61,6 @@ jobs:
     name: "Hardening: ignore-scripts + extra-install-dirs"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      MARKER_FILE: ${{ runner.temp }}/self-test-marker
     defaults:
       run:
         working-directory: .github/fixtures/self-test
@@ -72,6 +70,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
+
+      - name: Export marker path
+        run: echo "MARKER_FILE=$RUNNER_TEMP/self-test-marker" >> "$GITHUB_ENV"
 
       - name: Reset marker
         run: rm -f "$MARKER_FILE"

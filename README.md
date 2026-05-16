@@ -154,7 +154,7 @@ jobs:
 | `pre-command` | `""` | Setup command before tests (e.g., `"bun run build"`) |
 | `ignore-scripts` | `false` | Pass `--ignore-scripts` to every `bun install` step (see **Hardening** below) |
 | `extra-install-dirs` | `""` | Comma-separated subdirs that need their own `bun install` (e.g. `"worker"` or `"worker,dashboard"`) |
-| `trusted-native-deps` | `""` | Comma-separated packages whose postinstall must still run when `ignore-scripts: true`. Restores native bindings (e.g. `better-sqlite3,sharp`). Top-level install only — see **Native dependencies + ignore-scripts** below |
+| `trusted-native-deps` | `""` | Comma-separated packages whose postinstall must still run when `ignore-scripts: true` (native bindings: `better-sqlite3`, `sharp`, etc.). When non-empty, `--ignore-scripts` is NOT forwarded; defense moves to bun's `trustedDependencies` whitelist — see **Native dependencies + ignore-scripts** below |
 
 ### L1: Unit Tests
 
@@ -218,17 +218,9 @@ jobs:
 
 ### `ignore-scripts: true`
 
-Forwards `--ignore-scripts` to every `bun install --frozen-lockfile` step. Postinstall hooks for compromised packages cannot run, even if a malicious version is pinned in `bun.lock`.
+Forwards `--ignore-scripts` to every `bun install --frozen-lockfile` step **only when `trusted-native-deps` is empty**. In that mode bun drops every lifecycle script — postinstall hooks for compromised packages cannot run, even if a malicious version is pinned in `bun.lock`. Pick this mode when the dependency graph has **no** native packages (or when you have vendored their bindings).
 
-This **only works** if your consumer repo declares every native package whose postinstall must still run in `package.json#trustedDependencies`:
-
-```json
-{
-  "trustedDependencies": ["esbuild", "sharp", "better-sqlite3"]
-}
-```
-
-Common entries: `esbuild`, `sharp`, `better-sqlite3`, `unrs-resolver`, `@swc/core`, the Next.js `@next/swc-*` binary. If a native dependency is missing from `trustedDependencies` while `ignore-scripts: true` is on, builds will fail with a missing-binary error — that is the signal to add it (vetted) to the list.
+When `trusted-native-deps` is non-empty, `--ignore-scripts` is **not** forwarded; defense moves to bun's `trustedDependencies` whitelist instead — see [Native dependencies + ignore-scripts](#native-dependencies--ignore-scripts) below. The two paths are mutually exclusive because `bun install --ignore-scripts` is a hard switch that overrides `trustedDependencies`, and `bun pm trust` cannot recover scripts that were never queued (verified on bun 1.3.x).
 
 ### `extra-install-dirs: "worker"` (or `"worker,dashboard"`)
 
@@ -238,23 +230,45 @@ The step is a no-op when the input is `""` (default), so this is safe to set glo
 
 ## Native dependencies + ignore-scripts
 
-`--ignore-scripts` is a hard switch: it blocks **every** postinstall, including the ones Bun would normally allow via `package.json#trustedDependencies`. The `trustedDependencies` field only relaxes Bun's *default* postinstall blocking — it has no effect once `--ignore-scripts` is on the command line. Packages that download or compile a `.node` binding in their postinstall (e.g. `better-sqlite3`, `sharp`, the `@next/swc-*` binary, `unrs-resolver`) therefore fail at runtime with a missing-binary error when `ignore-scripts: true` is enabled.
+`bun install --ignore-scripts` is a hard switch: bun drops every lifecycle script entirely instead of queuing it for later. That means **the `bun pm trust` recovery path is unusable on bun** — running `bun pm trust <pkg>` after `bun install --ignore-scripts` reports "0 scripts ran" and exits 1, and native bindings stay missing. This is verified on bun 1.3.x (see [STU-95](https://github.com/nocoo/base-ci) for a minimal repro: `bun add better-sqlite3 --ignore-scripts && bun pm trust better-sqlite3` ⇒ exit 1, binding not built).
 
-Since v2026.3, `bun-quality.yml` ships a third input — `trusted-native-deps` — that re-runs lifecycle scripts for an explicit allow-list after the hardened main install:
+The right model for native deps under bun is bun's own `trustedDependencies` whitelist. By default bun runs postinstall scripts **only** for packages listed in the caller repo's `package.json#trustedDependencies` — every other postinstall is blocked. That is exactly the Shai-Hulud defense semantic we want, and it does not need `--ignore-scripts`.
+
+Since v2026.4, `trusted-native-deps` switches `bun-quality.yml` into this mode. When you pass a non-empty list:
+
+1. `--ignore-scripts` is **not** forwarded — bun runs with its default lifecycle policy.
+2. Bun consults `package.json#trustedDependencies` and runs postinstall **only** for packages on that list.
+3. Every other postinstall (including any malicious lifecycle script in a transitive dep) stays blocked.
+
+To use it, declare the same packages in **both** places — `package.json` for bun, and `trusted-native-deps` for base-ci. The two must stay in sync; the workflow input exists for documentation and as a validation hook for future tooling.
+
+```jsonc
+// package.json (caller repo)
+{
+  "trustedDependencies": ["better-sqlite3", "sharp"]
+}
+```
 
 ```yaml
+# .github/workflows/ci.yml (caller repo)
 jobs:
   quality:
-    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.3
+    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.4
     with:
       ignore-scripts: true
       trusted-native-deps: "better-sqlite3,sharp"
     secrets: inherit
 ```
 
-Behind the scenes, every job runs `bun pm trust better-sqlite3 sharp` immediately after `bun install --ignore-scripts`. Only the packages you name execute their postinstall; everything else stays blocked. Shai-Hulud defense for the rest of the dependency graph is preserved.
+Common entries: `better-sqlite3`, `sharp`, `esbuild`, `unrs-resolver`, `@swc/core`, the Next.js `@next/swc-*` binary. If a native dependency is missing from both lists, builds will fail with a missing-binary error — that is the signal to add it (vetted) to the whitelist.
 
-**Scope limitation (v2026.3).** `trusted-native-deps` only re-runs scripts for the **top-level** install. Native packages that live inside an `extra-install-dirs` subdirectory (e.g. `worker/`) are not handled — if you need that, vendor the binary, install the native dep at the top level, or wait for v2026.4 to extend the recipe.
+### When to leave `trusted-native-deps` empty
+
+If your dependency graph genuinely has **no** native packages (or you have vendored every binding), leave `trusted-native-deps: ""` and keep `ignore-scripts: true`. That is the hardest mode: `--ignore-scripts` is forwarded, every lifecycle script is dropped, and `trustedDependencies` is irrelevant. No native-dep recovery path exists in this mode — pick it only when you do not need one.
+
+### Scope limitation
+
+`trusted-native-deps` is a documentation/sync field for the **top-level** install; the actual whitelist lives in the caller's top-level `package.json#trustedDependencies`. Subdirectory installs from `extra-install-dirs` consult their own `package.json#trustedDependencies` independently, so add the same entries there if a native dep lives inside (e.g.) `worker/`.
 
 ## Architecture
 

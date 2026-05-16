@@ -32,7 +32,7 @@ on:
 
       # Hardening: lifecycle-script isolation (Shai-Hulud / npm supply-chain defense)
       ignore-scripts:
-        description: "Pass --ignore-scripts to all bun install steps (defense against Shai-Hulud-style supply-chain worms). Requires consumer repo to set trustedDependencies in package.json."
+        description: "Strongest Shai-Hulud defense: pass --ignore-scripts to every bun install step. Blocks every lifecycle script. Only takes effect when trusted-native-deps is empty — when trusted-native-deps is non-empty we rely on package.json#trustedDependencies as the whitelist instead, because bun's --ignore-scripts overrides that whitelist."
         type: boolean
         default: false
       extra-install-dirs:
@@ -40,7 +40,7 @@ on:
         type: string
         default: ""
       trusted-native-deps:
-        description: "Comma-separated list of packages whose lifecycle scripts must run even when ignore-scripts is true. Used to restore native bindings (better-sqlite3, sharp, etc.) while keeping Shai-Hulud defense for everything else. Only applies to the top-level install, not extra-install-dirs subdirs."
+        description: "Comma-separated list of packages whose postinstall must still run (native bindings: better-sqlite3, sharp, esbuild, @next/swc-*, unrs-resolver, etc.). When this is non-empty, --ignore-scripts is NOT forwarded; the caller's package.json#trustedDependencies acts as the whitelist (bun runs postinstall only for packages on that list). Keep the two lists identical. When this is empty AND ignore-scripts is true, --ignore-scripts is forwarded (hardest mode, no native deps)."
         type: string
         default: ""
 
@@ -150,7 +150,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+        run: bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }}
 
       - name: Trust native deps
         if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
@@ -176,7 +176,7 @@ jobs:
           for d in "${DIRS[@]}"; do
             d_trim="$(echo "$d" | xargs)"
             echo "::group::bun install in $d_trim"
-            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }})
             echo "::endgroup::"
           done
 
@@ -262,7 +262,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+        run: bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }}
 
       - name: Trust native deps
         if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
@@ -288,7 +288,7 @@ jobs:
           for d in "${DIRS[@]}"; do
             d_trim="$(echo "$d" | xargs)"
             echo "::group::bun install in $d_trim"
-            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }})
             echo "::endgroup::"
           done
 
@@ -324,7 +324,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+        run: bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }}
 
       - name: Trust native deps
         if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
@@ -350,7 +350,7 @@ jobs:
           for d in "${DIRS[@]}"; do
             d_trim="$(echo "$d" | xargs)"
             echo "::group::bun install in $d_trim"
-            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }})
             echo "::endgroup::"
           done
 
@@ -388,7 +388,7 @@ jobs:
           bun-version: ${{ inputs.bun-version }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+        run: bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }}
 
       - name: Trust native deps
         if: inputs.ignore-scripts && inputs.trusted-native-deps != ''
@@ -414,7 +414,7 @@ jobs:
           for d in "${DIRS[@]}"; do
             d_trim="$(echo "$d" | xargs)"
             echo "::group::bun install in $d_trim"
-            (cd "$d_trim" && bun install --frozen-lockfile ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }})
+            (cd "$d_trim" && bun install --frozen-lockfile ${{ (inputs.ignore-scripts && inputs.trusted-native-deps == '') && '--ignore-scripts' || '' }})
             echo "::endgroup::"
           done
 

@@ -154,6 +154,7 @@ jobs:
 | `pre-command` | `""` | Setup command before tests (e.g., `"bun run build"`) |
 | `ignore-scripts` | `false` | Pass `--ignore-scripts` to every `bun install` step (see **Hardening** below) |
 | `extra-install-dirs` | `""` | Comma-separated subdirs that need their own `bun install` (e.g. `"worker"` or `"worker,dashboard"`) |
+| `trusted-native-deps` | `""` | Comma-separated packages whose postinstall must still run when `ignore-scripts: true`. Restores native bindings (e.g. `better-sqlite3,sharp`). Top-level install only — see **Native dependencies + ignore-scripts** below |
 
 ### L1: Unit Tests
 
@@ -234,6 +235,26 @@ Common entries: `esbuild`, `sharp`, `better-sqlite3`, `unrs-resolver`, `@swc/cor
 After the main `bun install`, each job recurses into every comma-separated subdirectory and runs `bun install --frozen-lockfile` there (inheriting the `ignore-scripts` flag). Use for repos with fixed sub-trees that have their own lockfile, like Cloudflare Worker subprojects or standalone dashboards.
 
 The step is a no-op when the input is `""` (default), so this is safe to set globally.
+
+## Native dependencies + ignore-scripts
+
+`--ignore-scripts` is a hard switch: it blocks **every** postinstall, including the ones Bun would normally allow via `package.json#trustedDependencies`. The `trustedDependencies` field only relaxes Bun's *default* postinstall blocking — it has no effect once `--ignore-scripts` is on the command line. Packages that download or compile a `.node` binding in their postinstall (e.g. `better-sqlite3`, `sharp`, the `@next/swc-*` binary, `unrs-resolver`) therefore fail at runtime with a missing-binary error when `ignore-scripts: true` is enabled.
+
+Since v2026.3, `bun-quality.yml` ships a third input — `trusted-native-deps` — that re-runs lifecycle scripts for an explicit allow-list after the hardened main install:
+
+```yaml
+jobs:
+  quality:
+    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.3
+    with:
+      ignore-scripts: true
+      trusted-native-deps: "better-sqlite3,sharp"
+    secrets: inherit
+```
+
+Behind the scenes, every job runs `bun pm trust better-sqlite3 sharp` immediately after `bun install --ignore-scripts`. Only the packages you name execute their postinstall; everything else stays blocked. Shai-Hulud defense for the rest of the dependency graph is preserved.
+
+**Scope limitation (v2026.3).** `trusted-native-deps` only re-runs scripts for the **top-level** install. Native packages that live inside an `extra-install-dirs` subdirectory (e.g. `worker/`) are not handled — if you need that, vendor the binary, install the native dep at the top level, or wait for v2026.4 to extend the recipe.
 
 ## Architecture
 

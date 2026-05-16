@@ -2,10 +2,10 @@
   "name": "base-ci-self-test-fixture",
   "version": "0.0.0",
   "private": true,
-  "description": "Fixture exercised by .github/workflows/self-test.yml. self-test-marker writes a sentinel file from its postinstall script, so we can assert --ignore-scripts truly skipped it. self-test-native-marker is intentionally NOT in trustedDependencies — it simulates a native dep whose postinstall is gated behind 'bun pm trust' and exercises the v2026.3 trusted-native-deps input.",
+  "description": "Fixture exercised by .github/workflows/self-test.yml. Two postinstall-bearing packages: self-test-native-marker simulates a native dep (e.g. better-sqlite3) and is whitelisted via trustedDependencies — bun must run its postinstall under the v2026.4 model. self-test-marker is intentionally NOT in trustedDependencies — its postinstall must stay blocked, proving Shai-Hulud defense is preserved for everything outside the whitelist.",
   "dependencies": {
     "self-test-marker": "file:./marker-pkg",
     "self-test-native-marker": "file:./native-marker-pkg"
   },
-  "trustedDependencies": ["self-test-marker"]
+  "trustedDependencies": ["self-test-native-marker"]
 }

@@ -2,7 +2,8 @@
   "name": "self-test-native-marker",
   "version": "0.0.0",
   "private": true,
+  "main": "index.js",
   "scripts": {
-    "postinstall": "node -e \"require('fs').writeFileSync(process.env.NATIVE_MARKER_FILE || '/tmp/self-test-native-marker', 'ran')\""
+    "postinstall": "node ./postinstall.js"
   }
 }

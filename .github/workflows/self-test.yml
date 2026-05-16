@@ -52,11 +52,12 @@ jobs:
   # Behavior coverage for the v2026.2 hardening inputs.
   #
   # The fixture under .github/fixtures/self-test/ pulls a local
-  # `self-test-marker` package whose postinstall writes a sentinel file
-  # at $MARKER_FILE. Running `bun install --ignore-scripts` against the
-  # fixture must NOT create that file; the same recipe without the flag
-  # MUST create it. That gives us a direct proof that the recipe used by
-  # bun-quality.yml actually suppresses lifecycle scripts.
+  # `self-test-native-marker` package (whitelisted via trustedDependencies)
+  # whose postinstall writes a sentinel file at $NATIVE_MARKER_FILE.
+  # Running `bun install --ignore-scripts` against the fixture must NOT
+  # create that file; the same recipe without the flag MUST create it.
+  # That gives us a direct proof that the recipe used by bun-quality.yml
+  # actually suppresses lifecycle scripts.
   hardening:
     name: "Hardening: ignore-scripts + extra-install-dirs"
     runs-on: ubuntu-latest
@@ -71,29 +72,31 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      - name: Export marker path
-        run: echo "MARKER_FILE=$RUNNER_TEMP/self-test-marker" >> "$GITHUB_ENV"
+      - name: Export marker paths
+        run: |
+          echo "MARKER_FILE=$RUNNER_TEMP/self-test-marker" >> "$GITHUB_ENV"
+          echo "NATIVE_MARKER_FILE=$RUNNER_TEMP/self-test-native-marker" >> "$GITHUB_ENV"
 
-      - name: Reset marker
-        run: rm -f "$MARKER_FILE"
+      - name: Reset markers
+        run: rm -f "$MARKER_FILE" "$NATIVE_MARKER_FILE"
 
       - name: Negative control — install without --ignore-scripts
         run: bun install --frozen-lockfile
 
-      - name: Assert postinstall ran in the negative control
+      - name: Assert whitelisted postinstall ran in the negative control
         shell: bash
         run: |
-          if [ ! -f "$MARKER_FILE" ]; then
-            echo "❌ negative control failed: marker missing, fixture is broken"
+          if [ ! -f "$NATIVE_MARKER_FILE" ]; then
+            echo "❌ negative control failed: whitelisted marker missing, fixture is broken"
             exit 1
           fi
-          echo "✅ negative control: postinstall ran as expected"
+          echo "✅ negative control: postinstall ran for whitelisted dep as expected"
 
       - name: Reset fixture for the hardened run
         shell: bash
         run: |
           rm -rf node_modules worker/node_modules
-          rm -f "$MARKER_FILE"
+          rm -f "$MARKER_FILE" "$NATIVE_MARKER_FILE"
 
       - name: Install fixture with --ignore-scripts (mirrors bun-quality.yml)
         run: bun install --frozen-lockfile --ignore-scripts
@@ -112,26 +115,27 @@ jobs:
       - name: Assert --ignore-scripts skipped both installs
         shell: bash
         run: |
-          if [ -f "$MARKER_FILE" ]; then
-            echo "❌ marker exists — postinstall ran despite --ignore-scripts"
+          if [ -f "$MARKER_FILE" ] || [ -f "$NATIVE_MARKER_FILE" ]; then
+            echo "❌ a marker exists — postinstall ran despite --ignore-scripts"
+            ls -la "$MARKER_FILE" "$NATIVE_MARKER_FILE" 2>&1 || true
             exit 1
           fi
           echo "✅ --ignore-scripts suppressed lifecycle scripts in main + worker"
 
-  # Behavior coverage for the v2026.3 trusted-native-deps input.
+  # Behavior coverage for the v2026.4 trusted-native-deps model.
   #
-  # The fixture pulls TWO marker packages:
-  #   - self-test-marker         (in trustedDependencies)
-  #   - self-test-native-marker  (NOT in trustedDependencies — simulates a
-  #                               native dep whose postinstall is gated)
+  # When the caller workflow sets `trusted-native-deps: "..."`, bun-quality.yml
+  # does NOT forward --ignore-scripts. Instead bun uses its own
+  # `package.json#trustedDependencies` whitelist to gate which postinstall
+  # scripts run. This job exercises that recipe:
   #
-  # After `bun install --ignore-scripts`, BOTH postinstalls must be blocked.
-  # Running `bun pm trust self-test-native-marker` then mirrors the recipe
-  # bun-quality.yml emits when trusted-native-deps lists that package: only
-  # that one postinstall re-runs, the other stays blocked. That gives a
-  # direct positive+negative proof for the v2026.3 behavior.
+  #   - self-test-native-marker  (IN trustedDependencies — must run)
+  #   - self-test-marker         (NOT in trustedDependencies — must stay blocked)
+  #
+  # That is a direct positive+negative proof for the v2026.4 behavior:
+  # native bindings load, every other postinstall stays gated.
   trusted-native-deps:
-    name: "Hardening: trusted-native-deps re-runs whitelisted postinstall"
+    name: "Hardening: trustedDependencies whitelist runs only listed postinstall"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
@@ -155,43 +159,28 @@ jobs:
           rm -rf node_modules worker/node_modules
           rm -f "$MARKER_FILE" "$NATIVE_MARKER_FILE"
 
-      - name: Install fixture with --ignore-scripts (mirrors bun-quality.yml)
-        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install fixture (no --ignore-scripts, mirrors v2026.4 bun-quality.yml when trusted-native-deps is set)
+        run: bun install --frozen-lockfile
 
-      - name: Negative check — neither postinstall ran after --ignore-scripts
-        shell: bash
-        run: |
-          if [ -f "$MARKER_FILE" ] || [ -f "$NATIVE_MARKER_FILE" ]; then
-            echo "❌ a marker exists after --ignore-scripts; fixture or flag broken"
-            ls -la "$MARKER_FILE" "$NATIVE_MARKER_FILE" 2>&1 || true
-            exit 1
-          fi
-          echo "✅ --ignore-scripts blocked both postinstalls as expected"
-
-      - name: Trust native deps (mirrors bun-quality.yml trusted-native-deps loop)
-        shell: bash
-        run: |
-          IFS=',' read -ra PKGS <<< "self-test-native-marker"
-          ARGS=()
-          for p in "${PKGS[@]}"; do
-            p_trim="$(echo "$p" | xargs)"
-            [ -n "$p_trim" ] && ARGS+=("$p_trim")
-          done
-          if [ ${#ARGS[@]} -gt 0 ]; then
-            echo "::group::bun pm trust ${ARGS[*]}"
-            bun pm trust "${ARGS[@]}"
-            echo "::endgroup::"
-          fi
-
-      - name: Assert trust re-ran ONLY the whitelisted postinstall
+      - name: Assert ONLY the whitelisted postinstall ran
         shell: bash
         run: |
           if [ ! -f "$NATIVE_MARKER_FILE" ]; then
-            echo "❌ native marker missing — bun pm trust did not re-run the whitelisted postinstall"
+            echo "❌ native marker missing — trustedDependencies whitelist did NOT run self-test-native-marker's postinstall"
             exit 1
           fi
           if [ -f "$MARKER_FILE" ]; then
-            echo "❌ non-whitelisted marker exists — trust step over-ran scripts (Shai-Hulud defense broken)"
+            echo "❌ non-whitelisted marker exists — bun ran self-test-marker's postinstall despite it being absent from trustedDependencies (Shai-Hulud defense broken)"
             exit 1
           fi
-          echo "✅ bun pm trust re-ran only self-test-native-marker; self-test-marker stayed blocked"
+          echo "✅ trustedDependencies whitelist ran ONLY self-test-native-marker; self-test-marker stayed blocked"
+
+      - name: Sanity check — require('self-test-native-marker') loads (mirrors native binding)
+        shell: bash
+        run: |
+          # The package's index.js throws if its postinstall flag is missing
+          # — the same failure mode `require('better-sqlite3')` would exhibit
+          # when its prebuilt binding never got fetched. Asserts the v2026.4
+          # path produces a *working* dep, not just a marker file.
+          node -e "const m = require('self-test-native-marker'); if (!m.loaded) { console.error('loaded flag missing'); process.exit(1); }"
+          echo "✅ require('self-test-native-marker') succeeds (binding usable)"

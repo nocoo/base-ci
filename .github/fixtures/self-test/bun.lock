@@ -6,6 +6,7 @@
       "name": "base-ci-self-test-fixture",
       "dependencies": {
         "self-test-marker": "file:./marker-pkg",
+        "self-test-native-marker": "file:./native-marker-pkg",
       },
     },
   },
@@ -14,5 +15,7 @@
   ],
   "packages": {
     "self-test-marker": ["self-test-marker@file:marker-pkg", {}],
+
+    "self-test-native-marker": ["self-test-native-marker@file:native-marker-pkg", {}],
   }
 }

@@ -2,9 +2,10 @@
   "name": "base-ci-self-test-fixture",
   "version": "0.0.0",
   "private": true,
-  "description": "Fixture exercised by .github/workflows/self-test.yml. self-test-marker writes a sentinel file from its postinstall script, so we can assert --ignore-scripts truly skipped it.",
+  "description": "Fixture exercised by .github/workflows/self-test.yml. self-test-marker writes a sentinel file from its postinstall script, so we can assert --ignore-scripts truly skipped it. self-test-native-marker is intentionally NOT in trustedDependencies — it simulates a native dep whose postinstall is gated behind 'bun pm trust' and exercises the v2026.3 trusted-native-deps input.",
   "dependencies": {
-    "self-test-marker": "file:./marker-pkg"
+    "self-test-marker": "file:./marker-pkg",
+    "self-test-native-marker": "file:./native-marker-pkg"
   },
   "trustedDependencies": ["self-test-marker"]
 }

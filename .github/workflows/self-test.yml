@@ -120,12 +120,16 @@ jobs:
 
   # Behavior coverage for the v2026.3 trusted-native-deps input.
   #
-  # Re-uses the same marker fixture: with --ignore-scripts the postinstall
-  # is skipped (proven by the `hardening` job above). This job mirrors the
-  # exact recipe bun-quality.yml emits when ignore-scripts is true AND
-  # trusted-native-deps lists the marker package — running `bun pm trust
-  # self-test-marker` immediately after the hardened install must re-execute
-  # the postinstall for just that package and produce the marker file.
+  # The fixture pulls TWO marker packages:
+  #   - self-test-marker         (in trustedDependencies)
+  #   - self-test-native-marker  (NOT in trustedDependencies — simulates a
+  #                               native dep whose postinstall is gated)
+  #
+  # After `bun install --ignore-scripts`, BOTH postinstalls must be blocked.
+  # Running `bun pm trust self-test-native-marker` then mirrors the recipe
+  # bun-quality.yml emits when trusted-native-deps lists that package: only
+  # that one postinstall re-runs, the other stays blocked. That gives a
+  # direct positive+negative proof for the v2026.3 behavior.
   trusted-native-deps:
     name: "Hardening: trusted-native-deps re-runs whitelisted postinstall"
     runs-on: ubuntu-latest
@@ -140,31 +144,34 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      - name: Export marker path
-        run: echo "MARKER_FILE=$RUNNER_TEMP/self-test-marker-trusted" >> "$GITHUB_ENV"
+      - name: Export marker paths
+        run: |
+          echo "MARKER_FILE=$RUNNER_TEMP/self-test-marker" >> "$GITHUB_ENV"
+          echo "NATIVE_MARKER_FILE=$RUNNER_TEMP/self-test-native-marker" >> "$GITHUB_ENV"
 
-      - name: Reset fixture and marker
+      - name: Reset fixture and markers
         shell: bash
         run: |
           rm -rf node_modules worker/node_modules
-          rm -f "$MARKER_FILE"
+          rm -f "$MARKER_FILE" "$NATIVE_MARKER_FILE"
 
       - name: Install fixture with --ignore-scripts (mirrors bun-quality.yml)
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Negative check — marker must be absent after --ignore-scripts
+      - name: Negative check — neither postinstall ran after --ignore-scripts
         shell: bash
         run: |
-          if [ -f "$MARKER_FILE" ]; then
-            echo "❌ marker exists after --ignore-scripts; fixture or flag broken"
+          if [ -f "$MARKER_FILE" ] || [ -f "$NATIVE_MARKER_FILE" ]; then
+            echo "❌ a marker exists after --ignore-scripts; fixture or flag broken"
+            ls -la "$MARKER_FILE" "$NATIVE_MARKER_FILE" 2>&1 || true
             exit 1
           fi
-          echo "✅ --ignore-scripts blocked postinstall as expected"
+          echo "✅ --ignore-scripts blocked both postinstalls as expected"
 
       - name: Trust native deps (mirrors bun-quality.yml trusted-native-deps loop)
         shell: bash
         run: |
-          IFS=',' read -ra PKGS <<< "self-test-marker"
+          IFS=',' read -ra PKGS <<< "self-test-native-marker"
           ARGS=()
           for p in "${PKGS[@]}"; do
             p_trim="$(echo "$p" | xargs)"
@@ -176,11 +183,15 @@ jobs:
             echo "::endgroup::"
           fi
 
-      - name: Assert trust re-ran the whitelisted postinstall
+      - name: Assert trust re-ran ONLY the whitelisted postinstall
         shell: bash
         run: |
-          if [ ! -f "$MARKER_FILE" ]; then
-            echo "❌ marker missing — bun pm trust did not re-run postinstall"
+          if [ ! -f "$NATIVE_MARKER_FILE" ]; then
+            echo "❌ native marker missing — bun pm trust did not re-run the whitelisted postinstall"
             exit 1
           fi
-          echo "✅ bun pm trust self-test-marker re-ran the postinstall"
+          if [ -f "$MARKER_FILE" ]; then
+            echo "❌ non-whitelisted marker exists — trust step over-ran scripts (Shai-Hulud defense broken)"
+            exit 1
+          fi
+          echo "✅ bun pm trust re-ran only self-test-native-marker; self-test-marker stayed blocked"

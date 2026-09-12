@@ -1,0 +1,71 @@
+name: Workflow Lint
+
+on:
+  workflow_call:
+    inputs:
+      files:
+        description: Space-separated workflow paths; empty checks all workflows
+        type: string
+        default: ''
+      required-reusable-workflow:
+        description: Reusable workflow that must appear in the selected files
+        type: string
+        default: ''
+      yamllint:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install verified actionlint
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+      - name: Validate workflow syntax
+        env:
+          WORKFLOW_FILES: ${{ inputs.files }}
+        run: |
+          read -r -a files <<< "$WORKFLOW_FILES"
+          "$RUNNER_TEMP/actionlint" "${files[@]}"
+      - name: Check immutable shared workflow references
+        env:
+          WORKFLOW_FILES: ${{ inputs.files }}
+          REQUIRED_WORKFLOW: ${{ inputs.required-reusable-workflow }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re, yaml
+          files = os.environ['WORKFLOW_FILES'].split() or list(pathlib.Path('.github/workflows').glob('*.y*ml'))
+          references = []
+          for path in files:
+              data = yaml.safe_load(pathlib.Path(path).read_text())
+              for job in data.get('jobs', {}).values():
+                  references.extend(item['uses'] for item in [job, *job.get('steps', [])] if 'uses' in item)
+          for ref in references:
+              if ref.startswith('nocoo/base-ci/') and not re.fullmatch(r'nocoo/base-ci/[^@]+@[a-f0-9]{40}', ref):
+                  raise SystemExit(f'Shared CI reference must use a full commit SHA: {ref}')
+          required = os.environ['REQUIRED_WORKFLOW']
+          if required and not any(ref.startswith(required + '@') for ref in references):
+              raise SystemExit(f'Missing required reusable workflow: {required}')
+          print(f'Validated {len(files)} workflow files and immutable base-ci references')
+          PY
+      - name: Check YAML style
+        if: inputs.yamllint
+        env:
+          WORKFLOW_FILES: ${{ inputs.files }}
+        run: |
+          python3 -m pip install --quiet 'yamllint==1.38.0'
+          read -r -a files <<< "$WORKFLOW_FILES"
+          if [ "${#files[@]}" = 0 ]; then files=(.github/workflows/*.yml); fi
+          yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' "${files[@]}"

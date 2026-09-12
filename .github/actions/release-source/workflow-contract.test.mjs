@@ -29,11 +29,16 @@ test('deploy-worker public secrets, lock and environment stay on the called job'
 
 test('deploy-worker pins verified Actions SHAs and requires an exact Wrangler version', () => {
   assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
-  assert.match(workflow, /actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020/);
-  assert.match(workflow, /oven-sh\/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6/);
-  assert.match(workflow, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
+  assert.match(workflow, /nocoo\/base-ci\/\.github\/actions\/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a/);
   assert.match(workflow, /wrangler-version:[\s\S]*required: true/);
-  assert.match(workflow, /Locked local wrangler binary not found/);
+  assert.match(workflow, /parsed != expected/);
+  assert.match(workflow, /os.path.abspath/);
+  assert.match(workflow, /bash -euo pipefail -c/);
+  assert.doesNotMatch(workflow, /bash -lc/);
+  assert.doesNotMatch(workflow, /download-artifact/);
+  assert.doesNotMatch(workflow, /artifact-mode/);
+  assert.match(workflow, /deploy-script:/);
+  assert.match(workflow, /install-policy:/);
 });
 
 test('release-source exposes run/tag/manual inputs and target-sha/source-run-id outputs', () => {

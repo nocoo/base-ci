@@ -68,10 +68,10 @@ on:
         description: Newline or comma separated extra frozen-install directories
         type: string
         default: ""
-      ignore-scripts:
-        description: Pass ignore-scripts to frozen installs
-        type: boolean
-        default: true
+      install-policy:
+        description: "setup-js lifecycle policy: blocked, trusted, or project"
+        type: string
+        default: "blocked"
 
       build-command:
         description: Optional build command after install (empty skips)
@@ -93,6 +93,10 @@ on:
         description: Wrangler subcommand after the local binary (default deploy)
         type: string
         default: "deploy"
+      deploy-script:
+        description: Optional project deploy command (e.g. bun run deploy); skips Wrangler subcommand
+        type: string
+        default: ""
       d1-migrations:
         description: Apply remote D1 migrations before deploy
         type: boolean
@@ -105,23 +109,6 @@ on:
         description: Optional full Wrangler D1 subcommand; overrides d1-databases looping
         type: string
         default: ""
-
-      artifact-mode:
-        description: verified-rebuild (default) or artifact
-        type: string
-        default: "verified-rebuild"
-      artifact-name:
-        description: Artifact name when artifact-mode is artifact
-        type: string
-        default: ""
-      artifact-id:
-        description: Optional artifact ID when artifact-mode is artifact
-        type: string
-        default: ""
-      artifact-path:
-        description: Download directory for the proven artifact
-        type: string
-        default: "."
 
       environment:
         description: GitHub environment on the deploy job (not a Wrangler env name)
@@ -179,15 +166,13 @@ jobs:
       target-sha: ${{ steps.source.outputs.target-sha }}
       source-run-id: ${{ steps.source.outputs.source-run-id }}
     steps:
-      - name: Reject floating versions and unknown modes
+      - name: Reject floating versions and unknown policies
         env:
           PACKAGE_MANAGER: ${{ inputs.package-manager }}
           RUNTIME_VERSION: ${{ inputs.runtime-version }}
           NODE_VERSION: ${{ inputs.node-version }}
           WRANGLER_VERSION: ${{ inputs.wrangler-version }}
-          ARTIFACT_MODE: ${{ inputs.artifact-mode }}
-          ARTIFACT_NAME: ${{ inputs.artifact-name }}
-          ARTIFACT_ID: ${{ inputs.artifact-id }}
+          INSTALL_POLICY: ${{ inputs.install-policy }}
           D1_MIGRATIONS: ${{ inputs.d1-migrations }}
           D1_DATABASES: ${{ inputs.d1-databases }}
           D1_COMMAND: ${{ inputs.d1-command }}
@@ -198,14 +183,10 @@ jobs:
             bun|npm|pnpm) ;;
             *) echo "::error::package-manager must be bun, npm, or pnpm"; exit 1 ;;
           esac
-          case "$ARTIFACT_MODE" in
-            verified-rebuild|artifact) ;;
-            *) echo "::error::artifact-mode must be verified-rebuild or artifact"; exit 1 ;;
+          case "$INSTALL_POLICY" in
+            blocked|trusted|project) ;;
+            *) echo "::error::install-policy must be blocked, trusted, or project"; exit 1 ;;
           esac
-          if [ "$ARTIFACT_MODE" = "artifact" ] && [ -z "$ARTIFACT_NAME" ] && [ -z "$ARTIFACT_ID" ]; then
-            echo "::error::artifact-mode=artifact requires artifact-name or artifact-id"
-            exit 1
-          fi
           if [[ ! "$WRANGLER_VERSION" =~ $exact ]]; then
             echo "::error::wrangler-version must be an exact version, not latest"
             exit 1
@@ -266,7 +247,6 @@ jobs:
           WORKING_DIRECTORY: ${{ inputs.working-directory }}
           WRANGLER_WORKING_DIRECTORY: ${{ inputs.wrangler-working-directory }}
           WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
-          ARTIFACT_PATH: ${{ inputs.artifact-path }}
           EXTRA_INSTALL_DIRS: ${{ inputs.extra-install-dirs }}
         run: |
           python3 - <<'PY'
@@ -289,7 +269,6 @@ jobs:
 
           workdir = rel("working-directory", os.environ.get("WORKING_DIRECTORY", "."))
           wrangler_wd = rel("wrangler-working-directory", os.environ.get("WRANGLER_WORKING_DIRECTORY", ""), True, workdir)
-          artifact_path = rel("artifact-path", os.environ.get("ARTIFACT_PATH", "."))
           config = (os.environ.get("WRANGLER_CONFIG") or "").strip()
           if config:
               rel("wrangler-config", config)
@@ -298,107 +277,33 @@ jobs:
               item = item.strip()
               if item:
                   extras.append(rel("extra-install-dirs", item))
-          unique = list(dict.fromkeys([workdir, *extras]))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"working-directory={workdir}\n")
               fh.write(f"wrangler-working-directory={wrangler_wd}\n")
-              fh.write(f"artifact-path={artifact_path}\n")
               fh.write("extra-install-dirs<<EOF\n")
-              fh.write("\n".join(unique) + ("\n" if unique else ""))
+              fh.write("\n".join(extras) + ("\n" if extras else ""))
               fh.write("EOF\n")
           PY
 
-      - name: Setup Node
-        if: inputs.node-version != ''
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Setup JS and frozen install
+        uses: nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a
         with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
           node-version: ${{ inputs.node-version }}
-
-      - name: Setup Bun
-        if: inputs.package-manager == 'bun'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: ${{ inputs.runtime-version }}
-
-      - name: Setup pnpm
-        if: inputs.package-manager == 'pnpm'
-        env:
-          PNPM_VERSION: ${{ inputs.runtime-version }}
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare "pnpm@${PNPM_VERSION}" --activate
-
-      - name: Frozen install
-        env:
-          PACKAGE_MANAGER: ${{ inputs.package-manager }}
-          IGNORE_SCRIPTS: ${{ inputs.ignore-scripts }}
-          INSTALL_DIRS: ${{ steps.paths.outputs.extra-install-dirs }}
-        run: |
-          set -euo pipefail
-          while IFS= read -r dir || [ -n "${dir:-}" ]; do
-            [ -n "$dir" ] || continue
-            if [ ! -d "$dir" ]; then
-              echo "::error::Install directory $dir does not exist"
-              exit 1
-            fi
-            echo "::group::frozen install in $dir"
-            case "$PACKAGE_MANAGER" in
-              bun)
-                if [ ! -f "$dir/bun.lock" ] && [ ! -f "$dir/bun.lockb" ]; then
-                  echo "::error::Missing bun lockfile in $dir"
-                  exit 1
-                fi
-                cmd=(bun install --frozen-lockfile)
-                ;;
-              npm)
-                if [ ! -f "$dir/package-lock.json" ] && [ ! -f "$dir/npm-shrinkwrap.json" ]; then
-                  echo "::error::Missing npm lockfile in $dir"
-                  exit 1
-                fi
-                cmd=(npm ci)
-                ;;
-              pnpm)
-                if [ ! -f "$dir/pnpm-lock.yaml" ]; then
-                  echo "::error::Missing pnpm-lock.yaml in $dir"
-                  exit 1
-                fi
-                cmd=(pnpm install --frozen-lockfile)
-                ;;
-            esac
-            if [ "$IGNORE_SCRIPTS" = "true" ]; then
-              cmd+=(--ignore-scripts)
-            fi
-            (cd "$dir" && "${cmd[@]}")
-            echo "::endgroup::"
-          done <<< "$INSTALL_DIRS"
-
-      - name: Download proven artifact
-        if: inputs.artifact-mode == 'artifact' && inputs.artifact-id == ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ inputs.artifact-name }}
-          path: ${{ steps.paths.outputs.artifact-path }}
-          run-id: ${{ steps.source.outputs.source-run-id }}
-          github-token: ${{ github.token }}
-
-      - name: Download proven artifact by id
-        if: inputs.artifact-mode == 'artifact' && inputs.artifact-id != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ inputs.artifact-id }}
-          path: ${{ steps.paths.outputs.artifact-path }}
-          run-id: ${{ steps.source.outputs.source-run-id }}
-          github-token: ${{ github.token }}
+          working-directory: ${{ steps.paths.outputs.working-directory }}
+          extra-install-dirs: ${{ steps.paths.outputs.extra-install-dirs }}
+          install-policy: ${{ inputs.install-policy }}
 
       - name: Build
         if: inputs.build-command != ''
         working-directory: ${{ steps.paths.outputs.working-directory }}
         env:
           BUILD_COMMAND: ${{ inputs.build-command }}
-        run: bash -lc "$BUILD_COMMAND"
+        run: bash -euo pipefail -c "$BUILD_COMMAND"
 
       - name: Locate locked Wrangler
+        if: inputs.deploy-script == '' || inputs.d1-migrations
         id: wrangler
         env:
           WRANGLER_VERSION: ${{ inputs.wrangler-version }}
@@ -406,26 +311,51 @@ jobs:
           WORKDIR: ${{ steps.paths.outputs.working-directory }}
         run: |
           set -euo pipefail
-          bin=""
-          for dir in "$WRANGLER_WD" "$WORKDIR" "$GITHUB_WORKSPACE"; do
-            candidate="$dir/node_modules/.bin/wrangler"
-            if [ -x "$candidate" ]; then
-              bin=$candidate
-              break
-            fi
-          done
-          if [ -z "$bin" ]; then
-            echo "::error::Locked local wrangler binary not found after frozen install"
-            exit 1
+          python3 - <<'PY'
+          import os, re, sys
+
+          def abs_bin(root):
+              return os.path.abspath(os.path.join(root, "node_modules", ".bin", "wrangler"))
+
+          workspace = os.environ["GITHUB_WORKSPACE"]
+          candidates = []
+          for raw in (os.environ.get("WRANGLER_WD", ""), os.environ.get("WORKDIR", ""), workspace):
+              raw = raw.strip() or "."
+              root = raw if os.path.isabs(raw) else os.path.abspath(os.path.join(workspace, raw))
+              candidates.append(abs_bin(root))
+          bin_path = next((path for path in candidates if os.path.isfile(path) and os.access(path, os.X_OK)), "")
+          if not bin_path:
+              print("::error::Locked local wrangler binary not found after frozen install", file=sys.stderr)
+              sys.exit(1)
+          import subprocess
+          reported = subprocess.check_output([bin_path, "--version"], text=True, stderr=subprocess.STDOUT).strip()
+          expected = os.environ["WRANGLER_VERSION"].lstrip("v")
+          match = re.search(r"(\d+\.\d+\.\d+(?:[.-][A-Za-z0-9.-]+)?)", reported)
+          parsed = match.group(1) if match else ""
+          if parsed != expected:
+              print(f"::error::Local wrangler '{reported}' parsed '{parsed}', expected {expected}", file=sys.stderr)
+              sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"bin={bin_path}\n")
+          print(f"Using {bin_path} ({parsed})")
+          PY
+
+      - name: Require Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is empty in the deployment environment"
+            missing=1
           fi
-          reported=$("$bin" --version 2>/dev/null || true)
-          expected=${WRANGLER_VERSION#v}
-          if [[ "$reported" != *"$expected"* ]]; then
-            echo "::error::Local wrangler '$reported' does not match wrangler-version $expected"
-            exit 1
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is empty in the deployment environment"
+            missing=1
           fi
-          echo "bin=$bin" >> "$GITHUB_OUTPUT"
-          echo "Using $bin ($reported)"
+          exit "$missing"
 
       - name: Recheck default-branch freshness
         if: inputs.require-fresh-main && inputs.tag == ''
@@ -446,23 +376,6 @@ jobs:
             exit 1
           fi
 
-      - name: Require Cloudflare credentials
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          missing=0
-          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN is empty in the deployment environment"
-            missing=1
-          fi
-          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
-            echo "::error::CLOUDFLARE_ACCOUNT_ID is empty in the deployment environment"
-            missing=1
-          fi
-          exit "$missing"
-
       - name: Apply D1 migrations
         if: inputs.d1-migrations
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
@@ -480,7 +393,6 @@ jobs:
             config+=(--config "$WRANGLER_CONFIG")
           fi
           if [ -n "$D1_COMMAND" ]; then
-            # deploy inputs are caller workflow YAML, not event payload fields
             "$WRANGLER_BIN" $D1_COMMAND "${config[@]}"
             exit 0
           fi
@@ -494,7 +406,17 @@ jobs:
             "$WRANGLER_BIN" d1 migrations apply "$db" --remote "${config[@]}"
           done < <(printf '%s\n' "$D1_DATABASES" | tr ',' '\n')
 
+      - name: Run project deploy script
+        if: inputs.deploy-script != ''
+        working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
+        run: bash -euo pipefail -c "$DEPLOY_SCRIPT"
+
       - name: Deploy Worker
+        if: inputs.deploy-script == ''
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -532,7 +454,7 @@ jobs:
           i=1
           while [ "$i" -le "$retries" ]; do
             echo "verify attempt $i/$retries"
-            if bash -lc "$VERIFY_COMMAND"; then
+            if bash -euo pipefail -c "$VERIFY_COMMAND"; then
               exit 0
             fi
             if [ "$i" -eq "$retries" ]; then

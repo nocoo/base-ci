@@ -3,7 +3,7 @@
 # security scans (gitleaks + osv), and optional build, L2 (API E2E), L3 (Browser E2E),
 # Worker tests, and package checks.
 #
-# Emits tested-sha and artifact outputs only when all enabled checks succeed.
+# Emits tested-sha and artifact outputs only when all enabled checks succeed and tested-sha matches.
 
 name: Quality Gate
 
@@ -151,6 +151,14 @@ on:
         description: "Path to .gitleaks.toml (optional)"
         type: string
         default: ""
+      gitleaks-ignore-path:
+        description: "Path to .gitleaksignore file (optional)"
+        type: string
+        default: ""
+      security-command:
+        description: "Custom security check command (e.g. 'bun run gate:security')"
+        type: string
+        default: ""
 
       # Coverage and Artifacts
       coverage-path:
@@ -201,7 +209,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@9de725a1a13dd21f2580396d8d766e4a81ea9be2
+        uses: nocoo/base-ci/.github/actions/setup-js@941e0dc778dde827ccaf4f17a6062fbec4b057d3
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -212,85 +220,103 @@ jobs:
 
       - name: Validate disabled checks explanations
         shell: bash
+        env:
+          IN_REASONS: ${{ inputs.disabled-check-reasons }}
+          TYPECHECK_ENABLED: ${{ inputs.typecheck }}
+          LINT_ENABLED: ${{ inputs.lint }}
+          UNIT_ENABLED: ${{ inputs.unit }}
+          SECURITY_ENABLED: ${{ inputs.security }}
         run: |
           set -euo pipefail
-          REASONS='${{ inputs.disabled-check-reasons }}'
           python3 -c '
-          import sys, json
-          reasons_str = sys.argv[1]
-          reasons = json.loads(reasons_str) if reasons_str else {}
+          import os, sys, json
+          reasons_str = os.environ.get("IN_REASONS", "{}")
+          try:
+              reasons = json.loads(reasons_str) if reasons_str else {}
+          except Exception as e:
+              sys.stderr.write(f"::error::disabled-check-reasons is invalid JSON: {e}\n")
+              sys.exit(1)
+
           checks = {
-              "typecheck": "${{ inputs.typecheck }}" == "true",
-              "lint": "${{ inputs.lint }}" == "true",
-              "unit": "${{ inputs.unit }}" == "true",
-              "security": "${{ inputs.security }}" == "true",
+              "typecheck": os.environ.get("TYPECHECK_ENABLED") == "true",
+              "lint": os.environ.get("LINT_ENABLED") == "true",
+              "unit": os.environ.get("UNIT_ENABLED") == "true",
+              "security": os.environ.get("SECURITY_ENABLED") == "true",
           }
           for name, enabled in checks.items():
               if not enabled:
                   if name not in reasons or not str(reasons[name]).strip():
-                      sys.stderr.write(f"::error::Core check {name} is disabled but missing explanation in disabled-check-reasons\n")
+                      sys.stderr.write(f"::error::Core check \"{name}\" is disabled but missing explanation in disabled-check-reasons\n")
                       sys.exit(1)
                   print(f"Check {name} is explicitly disabled: {reasons[name]}")
-          ' "$REASONS"
+          '
 
       - name: Prepare environment
         if: inputs.prepare-command != ''
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.prepare-command }}
         run: |
-          set -euo pipefail
           echo "Executing prepare-command..."
-          ${{ inputs.prepare-command }}
+          bash -euo pipefail -c "$IN_PREPARE"
 
       - name: Inject env-json
         if: inputs.env-json != '{}' && inputs.env-json != ''
         shell: bash
+        env:
+          IN_ENV_JSON: ${{ inputs.env-json }}
         run: |
           python3 -c '
           import os, sys, json
-          data = json.loads(sys.argv[1])
-          with open(os.environ["GITHUB_ENV"], "a") as f:
+          data = json.loads(os.environ.get("IN_ENV_JSON", "{}"))
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
               for k, v in data.items():
                   delim = "EOF_" + os.urandom(8).hex()
                   f.write(f"{k}<<{delim}\n{v}\n{delim}\n")
-          ' '${{ inputs.env-json }}'
+          '
 
       - name: Static Check - Typecheck
         if: inputs.typecheck
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.typecheck-command }}
+          PKG_MGR: ${{ inputs.package-manager }}
         run: |
           set -euo pipefail
-          CMD="${{ inputs.typecheck-command }}"
+          CMD="$IN_CMD"
           if [ -z "$CMD" ]; then
-            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+            if [ "$PKG_MGR" = "bun" ]; then
               CMD="bun run typecheck"
-            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+            elif [ "$PKG_MGR" = "pnpm" ]; then
               CMD="pnpm run typecheck"
             else
               CMD="npm run typecheck"
             fi
           fi
-          # Guard against empty or fake-green commands
           TRIMMED="$(echo "$CMD" | xargs)"
           if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
             echo "::error::Invalid typecheck command '$TRIMMED'. Disable typecheck explicitly with disabled-check-reasons instead of using fake-green commands."
             exit 1
           fi
           echo "Running typecheck: $CMD"
-          $CMD
+          bash -euo pipefail -c "$CMD"
 
       - name: Static Check - Lint
         if: inputs.lint
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.lint-command }}
+          PKG_MGR: ${{ inputs.package-manager }}
         run: |
           set -euo pipefail
-          CMD="${{ inputs.lint-command }}"
+          CMD="$IN_CMD"
           if [ -z "$CMD" ]; then
-            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+            if [ "$PKG_MGR" = "bun" ]; then
               CMD="bun run lint"
-            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+            elif [ "$PKG_MGR" = "pnpm" ]; then
               CMD="pnpm run lint"
             else
               CMD="npm run lint"
@@ -302,19 +328,22 @@ jobs:
             exit 1
           fi
           echo "Running lint: $CMD"
-          $CMD
+          bash -euo pipefail -c "$CMD"
 
       - name: Unit Tests
         if: inputs.unit
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.test-command }}
+          PKG_MGR: ${{ inputs.package-manager }}
         run: |
           set -euo pipefail
-          CMD="${{ inputs.test-command }}"
+          CMD="$IN_CMD"
           if [ -z "$CMD" ]; then
-            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+            if [ "$PKG_MGR" = "bun" ]; then
               CMD="bun run test:coverage"
-            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+            elif [ "$PKG_MGR" = "pnpm" ]; then
               CMD="pnpm run test:coverage"
             else
               CMD="npm run test:coverage"
@@ -326,7 +355,7 @@ jobs:
             exit 1
           fi
           echo "Running unit tests: $CMD"
-          $CMD
+          bash -euo pipefail -c "$CMD"
 
       - name: Upload coverage
         if: inputs.unit && inputs.coverage-path != '' && !cancelled()
@@ -355,6 +384,8 @@ jobs:
       lockfiles: ${{ inputs.lockfiles != '' && inputs.lockfiles || (inputs.package-manager == 'bun' && 'bun.lock' || (inputs.package-manager == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json')) }}
       osv-config: ${{ inputs.osv-config }}
       gitleaks-config: ${{ inputs.gitleaks-config }}
+      gitleaks-ignore-path: ${{ inputs.gitleaks-ignore-path }}
+      security-command: ${{ inputs.security-command }}
       scan-secrets: true
       scan-dependencies: true
 
@@ -376,7 +407,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@9de725a1a13dd21f2580396d8d766e4a81ea9be2
+        uses: nocoo/base-ci/.github/actions/setup-js@941e0dc778dde827ccaf4f17a6062fbec4b057d3
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -389,27 +420,32 @@ jobs:
         if: inputs.prepare-command != ''
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.prepare-command }}
         run: |
-          set -euo pipefail
-          ${{ inputs.prepare-command }}
+          echo "Executing prepare-command..."
+          bash -euo pipefail -c "$IN_PREPARE"
 
       - name: Execute build
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_BUILD: ${{ inputs.build-command }}
+          PKG_MGR: ${{ inputs.package-manager }}
         run: |
           set -euo pipefail
-          CMD="${{ inputs.build-command }}"
+          CMD="$IN_BUILD"
           if [ -z "$CMD" ]; then
-            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+            if [ "$PKG_MGR" = "bun" ]; then
               CMD="bun run build"
-            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+            elif [ "$PKG_MGR" = "pnpm" ]; then
               CMD="pnpm run build"
             else
               CMD="npm run build"
             fi
           fi
           echo "Running build: $CMD"
-          $CMD
+          bash -euo pipefail -c "$CMD"
 
       - name: Upload build artifact
         id: upload-artifact-step
@@ -478,6 +514,8 @@ jobs:
       node-version: ${{ inputs.node-version }}
       working-directory: ${{ inputs.worker-directory }}
       install-policy: ${{ inputs.install-policy }}
+      extra-install-dirs: ${{ inputs.extra-install-dirs }}
+      pre-command: ${{ inputs.prepare-command }}
       command: ${{ inputs.worker-command != '' && inputs.worker-command || (inputs.package-manager == 'bun' && 'bun run test' || 'npm run test') }}
       env-json: ${{ inputs.env-json }}
 
@@ -494,12 +532,14 @@ jobs:
       node-version: ${{ inputs.node-version }}
       working-directory: ${{ inputs.working-directory }}
       install-policy: ${{ inputs.install-policy }}
+      extra-install-dirs: ${{ inputs.extra-install-dirs }}
+      pre-command: ${{ inputs.prepare-command }}
       command: ${{ inputs.package-command != '' && inputs.package-command || (inputs.package-manager == 'bun' && 'bun run ci:package' || 'npm run ci:package') }}
       env-json: ${{ inputs.env-json }}
 
   # ─────────────────────────────────────────────────────
   # Aggregate Gate: verifies all required jobs completed
-  # and consistent SHA before emitting tested-sha
+  # and consistent tested-sha across all enabled jobs before emitting output
   # ─────────────────────────────────────────────────────
   aggregate-gate:
     name: "Quality Gate Aggregate"
@@ -518,52 +558,69 @@ jobs:
       - name: Verify all enabled jobs and consistency
         id: verify-all
         shell: bash
+        env:
+          L1_RESULT: ${{ needs.l1-gate.result }}
+          L1_SHA: ${{ needs.l1-gate.outputs.tested-sha }}
+          SEC_RESULT: ${{ needs.security-gate.result }}
+          SEC_SHA: ${{ needs.security-gate.outputs.tested-sha }}
+          SEC_ENABLED: ${{ inputs.security }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          BUILD_SHA: ${{ needs.build.outputs.tested-sha }}
+          BUILD_ENABLED: ${{ inputs.build }}
+          L2_RESULT: ${{ needs.l2-gate.result }}
+          L2_SHA: ${{ needs.l2-gate.outputs.tested-sha }}
+          L2_ENABLED: ${{ inputs.l2 }}
+          L3_RESULT: ${{ needs.l3-gate.result }}
+          L3_SHA: ${{ needs.l3-gate.outputs.tested-sha }}
+          L3_ENABLED: ${{ inputs.l3 }}
+          WORKER_RESULT: ${{ needs.worker-gate.result }}
+          WORKER_SHA: ${{ needs.worker-gate.outputs.tested-sha }}
+          WORKER_ENABLED: ${{ inputs.worker }}
+          PKG_RESULT: ${{ needs.package-gate.result }}
+          PKG_SHA: ${{ needs.package-gate.outputs.tested-sha }}
+          PKG_ENABLED: ${{ inputs.package-check }}
         run: |
           set -euo pipefail
 
-          L1_RESULT="${{ needs.l1-gate.result }}"
-          SEC_RESULT="${{ needs.security-gate.result }}"
-          BUILD_RESULT="${{ needs.build.result }}"
-          L2_RESULT="${{ needs.l2-gate.result }}"
-          L3_RESULT="${{ needs.l3-gate.result }}"
-          WORKER_RESULT="${{ needs.worker-gate.result }}"
-          PKG_RESULT="${{ needs.package-gate.result }}"
+          python3 -c '
+          import os, sys
 
-          echo "Results summary:"
-          echo "  l1-gate:       $L1_RESULT"
-          echo "  security-gate: $SEC_RESULT (enabled=${{ inputs.security }})"
-          echo "  build:         $BUILD_RESULT (enabled=${{ inputs.build }})"
-          echo "  l2-gate:       $L2_RESULT (enabled=${{ inputs.l2 }})"
-          echo "  l3-gate:       $L3_RESULT (enabled=${{ inputs.l3 }})"
-          echo "  worker-gate:   $WORKER_RESULT (enabled=${{ inputs.worker }})"
-          echo "  package-gate:  $PKG_RESULT (enabled=${{ inputs.package-check }})"
+          jobs = [
+              ("l1-gate", os.environ["L1_RESULT"], os.environ.get("L1_SHA", ""), True),
+              ("security-gate", os.environ["SEC_RESULT"], os.environ.get("SEC_SHA", ""), os.environ["SEC_ENABLED"] == "true"),
+              ("build", os.environ["BUILD_RESULT"], os.environ.get("BUILD_SHA", ""), os.environ["BUILD_ENABLED"] == "true"),
+              ("l2-gate", os.environ["L2_RESULT"], os.environ.get("L2_SHA", ""), os.environ["L2_ENABLED"] == "true"),
+              ("l3-gate", os.environ["L3_RESULT"], os.environ.get("L3_SHA", ""), os.environ["L3_ENABLED"] == "true"),
+              ("worker-gate", os.environ["WORKER_RESULT"], os.environ.get("WORKER_SHA", ""), os.environ["WORKER_ENABLED"] == "true"),
+              ("package-gate", os.environ["PKG_RESULT"], os.environ.get("PKG_SHA", ""), os.environ["PKG_ENABLED"] == "true"),
+          ]
 
-          # Helper to assert job success if enabled
-          assert_success() {
-            local name="$1"
-            local res="$2"
-            local enabled="$3"
-            if [ "$enabled" = "true" ]; then
-              if [ "$res" != "success" ]; then
-                echo "::error::Required job '$name' did not succeed! Status: '$res'"
-                exit 1
-              fi
-            else
-              if [ "$res" != "skipped" ]; then
-                echo "::error::Disabled job '$name' was not skipped! Status: '$res'"
-                exit 1
-              fi
-            fi
-          }
+          print("Quality Aggregate Status Check:")
+          verified_shas = []
 
-          assert_success "l1-gate" "$L1_RESULT" "true"
-          assert_success "security-gate" "$SEC_RESULT" "${{ inputs.security }}"
-          assert_success "build" "$BUILD_RESULT" "${{ inputs.build }}"
-          assert_success "l2-gate" "$L2_RESULT" "${{ inputs.l2 }}"
-          assert_success "l3-gate" "$L3_RESULT" "${{ inputs.l3 }}"
-          assert_success "worker-gate" "$WORKER_RESULT" "${{ inputs.worker }}"
-          assert_success "package-gate" "$PKG_RESULT" "${{ inputs.package-check }}"
+          for name, result, sha, enabled in jobs:
+              print(f"  {name:15}: result={result:8} enabled={str(enabled):5} sha={sha}")
+              if enabled:
+                  if result != "success":
+                      sys.stderr.write(f"::error::Required job {name} failed with status \"{result}\"\n")
+                      sys.exit(1)
+                  if not sha:
+                      sys.stderr.write(f"::error::Required job {name} did not emit a tested-sha output\n")
+                      sys.exit(1)
+                  verified_shas.append((name, sha))
+              else:
+                  if result != "skipped":
+                      sys.stderr.write(f"::error::Disabled job {name} was not skipped (status: \"{result}\")\n")
+                      sys.exit(1)
 
-          CURRENT_SHA="$(git rev-parse HEAD)"
-          echo "All enabled jobs passed successfully."
-          echo "tested-sha=$CURRENT_SHA" >> "$GITHUB_OUTPUT"
+          # Verify that all enabled jobs tested the exact same commit SHA
+          first_name, first_sha = verified_shas[0]
+          for name, sha in verified_shas[1:]:
+              if sha != first_sha:
+                  sys.stderr.write(f"::error::Commit SHA mismatch between jobs! {first_name}={first_sha} vs {name}={sha}\n")
+                  sys.exit(1)
+
+          print(f"All {len(verified_shas)} enabled jobs succeeded and verified consistent SHA: {first_sha}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"tested-sha={first_sha}\n")
+          '

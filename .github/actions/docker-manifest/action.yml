@@ -1,0 +1,29 @@
+name: Docker release manifest
+description: Validate the complete set of images built for a tested commit
+inputs:
+  images:
+    description: JSON array of image, service, context, file and build-args objects
+    required: true
+  source-sha:
+    description: Full tested source commit
+    required: true
+  directory:
+    description: Downloaded digest manifests; empty when planning the build matrix
+    default: ''
+outputs:
+  matrix:
+    description: Validated build matrix
+    value: ${{ steps.manifest.outputs.matrix }}
+  release-images:
+    description: Complete service, image and digest manifest
+    value: ${{ steps.manifest.outputs.release-images }}
+runs:
+  using: composite
+  steps:
+    - id: manifest
+      shell: bash
+      env:
+        RELEASE_IMAGES: ${{ inputs.images }}
+        RELEASE_SOURCE_SHA: ${{ inputs.source-sha }}
+        RELEASE_MANIFEST_DIRECTORY: ${{ inputs.directory }}
+      run: node "$GITHUB_ACTION_PATH/index.mjs"

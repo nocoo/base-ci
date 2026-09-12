@@ -322,6 +322,30 @@ test('missing run, invalid run id and untrusted allowed events fail closed', asy
   assert.throws(() => parseAllowedEvents('push,pull_request'), /cannot include untrusted/);
 });
 
+test('cli ignores spoofed caller-event env and only reads GITHUB_EVENT_NAME', async () => {
+  const fetchImpl = api({
+    [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
+  });
+  const env = {
+    GITHUB_TOKEN: 'test-token',
+    GITHUB_REPOSITORY: REPO,
+    GITHUB_OUTPUT: join(mkdtempSync(join(tmpdir(), 'release-source-')), 'out'),
+    RELEASE_EXPECTED_WORKFLOW_PATH: PATH,
+    RELEASE_EXPECTED_WORKFLOW_NAME: NAME,
+    RELEASE_ALLOWED_SOURCE_EVENTS: 'push',
+    RELEASE_EXPECTED_BRANCH: 'main',
+    RELEASE_SOURCE_RUN_ID: String(RUN_ID),
+    RELEASE_REQUIRE_FRESH_MAIN: 'false',
+    RELEASE_CALLER_EVENT_NAME: 'schedule',
+  };
+  await assert.rejects(
+    () => runCli({ ...env, GITHUB_EVENT_NAME: 'pull_request' }, fetchImpl),
+    /Rejected deploy event "pull_request"/,
+  );
+  const resolved = await runCli({ ...env, GITHUB_EVENT_NAME: 'schedule' }, fetchImpl);
+  assert.equal(resolved['target-sha'], SHA);
+});
+
 test('cli reads GITHUB_EVENT_NAME and writes target-sha and source-run-id', async () => {
   const outputFile = join(mkdtempSync(join(tmpdir(), 'release-source-')), 'out');
   const resolved = await runCli(

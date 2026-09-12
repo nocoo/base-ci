@@ -89,6 +89,11 @@ on:
         type: number
         default: 7
 
+    secrets:
+      test-env-json:
+        description: "Optional explicit JSON string of test credentials, injected into environment without logging values"
+        required: false
+
     outputs:
       job-status:
         description: "Execution status of the test job"
@@ -113,7 +118,7 @@ jobs:
 
       - name: Setup Python
         if: inputs.python-version != ''
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ inputs.python-version }}
 
@@ -157,6 +162,7 @@ jobs:
         shell: bash
         env:
           IN_ENV_JSON: ${{ inputs.env-json }}
+          INPUT_TEST_ENV: ${{ secrets.test-env-json }}
         run: |
           set -euo pipefail
 
@@ -182,6 +188,31 @@ jobs:
                       env_file.write(f"{k}<<{delimiter}\n{v}\n{delimiter}\n")
           except Exception as e:
               sys.stderr.write(f"Failed to parse env-json: {e}\n")
+              sys.exit(1)
+          '
+          fi
+
+          # Merge test-env-json secrets without printing values
+          if [ -n "$INPUT_TEST_ENV" ] && [ "$INPUT_TEST_ENV" != "{}" ]; then
+            python3 -c '
+          import os, sys, json
+          raw = os.environ.get("INPUT_TEST_ENV", "{}")
+          try:
+              data = json.loads(raw)
+              if not isinstance(data, dict):
+                  sys.stderr.write("test-env-json must be a JSON object\n")
+                  sys.exit(1)
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+                  for k, v in data.items():
+                      if not isinstance(k, str) or not k.isidentifier():
+                          sys.stderr.write(f"Invalid secret env var name: {k}\n")
+                          sys.exit(1)
+                      # Ensure value is string
+                      val_str = str(v)
+                      delimiter = "EOF_" + os.urandom(8).hex()
+                      env_file.write(f"{k}<<{delimiter}\n{val_str}\n{delimiter}\n")
+          except Exception as e:
+              sys.stderr.write("Failed to parse test-env-json\n")
               sys.exit(1)
           '
           fi

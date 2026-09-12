@@ -1,7 +1,7 @@
 # Reusable security scanner workflow.
-# Pins gitleaks 8.30.1 and osv-scanner 2.5.1 with verified SHA256 checksums.
-# Runs secret scanning and vulnerability checks across multiple lockfiles (root, worker, rust, etc.).
-# Supports an optional custom security-command for custom gates (e.g. geekhub gate:security).
+# Pins gitleaks 8.30.1 and osv-scanner 2.5.1 with verified SHA256 checksums via setup-security-scanners.
+# Supports Bun installation when security-command or project context requires JS execution (e.g. geekhub gate:security).
+# Preserves ignore-gitleaks-allow, custom reports upload, and multi-lockfile OSV scanning.
 
 name: Security Scan
 
@@ -12,6 +12,26 @@ on:
         description: "Working directory relative to repo root"
         type: string
         default: "."
+      package-manager:
+        description: "Package manager if security-command requires dependencies (bun, npm, pnpm, or none)"
+        type: string
+        default: "none"
+      runtime-version:
+        description: "Runtime version for bun/pnpm if package-manager != none"
+        type: string
+        default: ""
+      node-version:
+        description: "Node.js version if package-manager != none"
+        type: string
+        default: ""
+      install-policy:
+        description: "Install policy if package-manager != none"
+        type: string
+        default: "blocked"
+      extra-install-dirs:
+        description: "Extra install dirs if package-manager != none"
+        type: string
+        default: ""
       lockfiles:
         description: "Newline or comma-separated lockfile paths to scan with OSV (defaults to bun.lock)"
         type: string
@@ -37,9 +57,17 @@ on:
         type: boolean
         default: true
       security-command:
-        description: "Custom security check command (e.g. 'bun run gate:security'). If provided, runs after scanners"
+        description: "Custom security check command (e.g. 'bun run gate:security'). Runs with bash -euo pipefail -c"
         type: string
         default: ""
+      report-path:
+        description: "Path to security report directory or file to upload as artifact (optional)"
+        type: string
+        default: ""
+      report-artifact-name:
+        description: "Name for security report artifact"
+        type: string
+        default: "security-report"
 
     outputs:
       job-status:
@@ -63,29 +91,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install gitleaks (pinned v8.30.1 with checksum verification)
-        if: inputs.scan-secrets
-        shell: bash
-        run: |
-          set -euo pipefail
-          GITLEAKS_VERSION="8.30.1"
-          GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
-          TAR_FILE="/tmp/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+      - name: Setup JS and dependencies (if security-command requires runtime)
+        if: inputs.package-manager != 'none'
+        uses: nocoo/base-ci/.github/actions/setup-js@8f984a8824a79407fc8953dfa4533cd0e75b9988
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
-          curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
-            -o "$TAR_FILE" \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-
-          ACTUAL_SHA256="$(sha256sum "$TAR_FILE" | awk '{print $1}')"
-          if [ "$ACTUAL_SHA256" != "$GITLEAKS_SHA256" ]; then
-            echo "::error::Gitleaks checksum mismatch! Expected: $GITLEAKS_SHA256, got: $ACTUAL_SHA256"
-            exit 1
-          fi
-
-          tar -xzf "$TAR_FILE" -C /usr/local/bin gitleaks
-          chmod +x /usr/local/bin/gitleaks
-          rm -f "$TAR_FILE"
-          gitleaks version
+      - name: Install security scanners (gitleaks + osv-scanner)
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@86ff9032d75b2580f8ea6b0e10db3ca4ce054819
 
       - name: Gitleaks detect
         if: inputs.scan-secrets
@@ -109,29 +127,6 @@ jobs:
           fi
           echo "Running gitleaks with args: $GITLEAKS_ARGS"
           gitleaks $GITLEAKS_ARGS
-
-      - name: Install osv-scanner (pinned v2.5.1 with checksum verification)
-        if: inputs.scan-dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          OSV_VERSION="2.5.1"
-          OSV_SHA256="f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
-          BIN_FILE="/tmp/osv-scanner_linux_amd64"
-
-          curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
-            -o "$BIN_FILE" \
-            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
-
-          ACTUAL_SHA256="$(sha256sum "$BIN_FILE" | awk '{print $1}')"
-          if [ "$ACTUAL_SHA256" != "$OSV_SHA256" ]; then
-            echo "::error::OSV-scanner checksum mismatch! Expected: $OSV_SHA256, got: $ACTUAL_SHA256"
-            exit 1
-          fi
-
-          mv "$BIN_FILE" /usr/local/bin/osv-scanner
-          chmod +x /usr/local/bin/osv-scanner
-          osv-scanner --version
 
       - name: OSV dependency scan
         if: inputs.scan-dependencies
@@ -181,6 +176,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         env:
           IN_SEC_CMD: ${{ inputs.security-command }}
+          CI: "true"
         run: |
           echo "Running custom security command..."
           bash -euo pipefail -c "$IN_SEC_CMD"
@@ -192,3 +188,12 @@ jobs:
         run: |
           echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload security reports
+        if: inputs.report-path != '' && !cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.report-artifact-name }}
+          path: ${{ inputs.report-path }}
+          retention-days: 7
+          if-no-files-found: ignore

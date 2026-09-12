@@ -184,6 +184,11 @@ on:
         type: string
         default: "{}"
 
+    secrets:
+      test-env-json:
+        description: "Optional explicit JSON string of test credentials, forwarded only to test jobs"
+        required: false
+
     outputs:
       tested-sha:
         description: "Commit SHA tested and verified across all enabled jobs"
@@ -516,6 +521,8 @@ jobs:
       pre-command: ${{ inputs.prepare-command }}
       command: ${{ inputs.l2-command != '' && inputs.l2-command || (inputs.package-manager == 'bun' && 'bun run test:api' || 'npm run test:api') }}
       env-json: ${{ inputs.env-json }}
+    secrets:
+      test-env-json: ${{ secrets.test-env-json }}
 
   # ─────────────────────────────────────────────────────
   # L3 Browser E2E with Playwright (optional)
@@ -536,6 +543,8 @@ jobs:
       pre-command: ${{ inputs.prepare-command }}
       command: ${{ inputs.l3-command != '' && inputs.l3-command || (inputs.package-manager == 'bun' && 'bun run test:e2e:pw' || 'npm run test:e2e:pw') }}
       env-json: ${{ inputs.env-json }}
+    secrets:
+      test-env-json: ${{ secrets.test-env-json }}
 
   # ─────────────────────────────────────────────────────
   # Worker tests (optional)
@@ -554,6 +563,8 @@ jobs:
       pre-command: ${{ inputs.worker-prepare-command }}
       command: ${{ inputs.worker-command != '' && inputs.worker-command || (inputs.package-manager == 'bun' && 'bun run test' || 'npm run test') }}
       env-json: ${{ inputs.env-json }}
+    secrets:
+      test-env-json: ${{ secrets.test-env-json }}
 
   # ─────────────────────────────────────────────────────
   # Package validation check (optional)
@@ -572,6 +583,8 @@ jobs:
       pre-command: ${{ inputs.prepare-command }}
       command: ${{ inputs.package-command != '' && inputs.package-command || (inputs.package-manager == 'bun' && 'bun run ci:package' || 'npm run ci:package') }}
       env-json: ${{ inputs.env-json }}
+    secrets:
+      test-env-json: ${{ secrets.test-env-json }}
 
   # ─────────────────────────────────────────────────────
   # Aggregate Gate: verifies all required jobs completed

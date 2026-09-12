@@ -2,7 +2,7 @@ name: Self Test Quality
 
 on:
   push:
-    branches: [feat/shared-quality-20260912]
+    branches: [main, feat/shared-quality-20260912]
   pull_request:
     branches: [main]
 
@@ -17,11 +17,21 @@ jobs:
       runner: ubuntu-latest
       runtime: none
       python-version: "3.11"
-      command: python3 -c "import sys; print('Native python execution ok on ' + sys.version)"
-      env-json: '{"TEST_MODE": "offline", "APP_ENV": "local"}'
+      pre-command: 'echo "PRE_FLAG=1" >> "$GITHUB_ENV"'
+      command: |
+        python3 -c "
+        import os, sys
+        assert os.environ.get('CI') == 'true', 'CI must be true'
+        assert os.environ.get('TEST_MODE') == 'offline', 'TEST_MODE mismatch'
+        assert os.environ.get('PRE_FLAG') == '1', 'PRE_FLAG from pre-command missing'
+        multi = os.environ.get('TEST_MULTILINE', '')
+        assert 'line1' in multi and 'line2' in multi, 'Multiline env missing'
+        print('Native python verified CI=true, pre-command env, and multiline env')
+        "
+      env-json: '{"TEST_MODE": "offline", "APP_ENV": "local", "TEST_MULTILINE": "line1\nline2\nline3"}'
 
   # ─────────────────────────────────────────────────────
-  # 2. Quality workflow invocation on fixture (with cd, &&, pipes, quotes)
+  # 2. Quality workflow invocation on fixture (with cd, &&, pipes, quotes, multiline env)
   # ─────────────────────────────────────────────────────
   test-quality-basic:
     name: "Quality Gate (bun on quality-basic fixture)"
@@ -35,19 +45,20 @@ jobs:
       unit: true
       security: false
       disabled-check-reasons: '{"security": "skip in local fixture test"}'
-      typecheck-command: "echo 'typecheck' && true"
+      typecheck-command: "echo 'typecheck' && [ \"$CI\" = 'true' ] && [ -n \"$TEST_MULTILINE\" ]"
       lint-command: "echo 'lint' | tr 'a-z' 'A-Z' > /dev/null"
-      test-command: "mkdir -p coverage && echo 'TN:\nend_of_record' > coverage/lcov.info && echo 'coverage ok'"
+      test-command: "mkdir -p coverage && echo 'TN:\nend_of_record' > coverage/lcov.info && [ -n \"$TEST_MULTILINE\" ] && echo 'coverage ok'"
       coverage-path: ".github/fixtures/quality-basic/coverage"
       build: true
-      build-command: "cd sub && echo 'build ok' && cd .."
+      build-command: "cd sub && echo 'build ok' && [ \"$CI\" = 'true' ] && cd .."
       l2: true
-      l2-command: "echo 'testing api' && test -d coverage"
+      l2-command: "test -f package.json && [ \"$CI\" = 'true' ] && [ -n \"$TEST_MULTILINE\" ]"
       worker: true
       worker-directory: ".github/fixtures/quality-basic/worker"
-      worker-command: "echo 'worker test' && true"
+      worker-command: "test -f package.json && echo 'worker test' && true"
       package-check: true
       package-command: "echo \"package check: ok\""
+      env-json: '{"TEST_MULTILINE": "line1\nline2"}'
 
   # ─────────────────────────────────────────────────────
   # 3. Security workflow invocation

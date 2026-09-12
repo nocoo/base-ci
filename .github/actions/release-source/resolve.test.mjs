@@ -15,6 +15,7 @@ const SHA_B = 'b'.repeat(40);
 const SHA_C = 'c'.repeat(40);
 const ZERO = '0'.repeat(40);
 const RUN_ID = 3456789012;
+const OTHER_RUN = 3456789013;
 const REPO = 'nocoo/hermes-on-herdr';
 const PATH = '.github/workflows/ci.yml';
 const NAME = 'CI';
@@ -65,35 +66,41 @@ function baseOptions(overrides = {}) {
   return {
     token: 'test-token',
     repository: REPO,
-    workflowPath: PATH,
-    workflowName: NAME,
+    eventName: 'workflow_run',
+    expectedWorkflowPath: PATH,
+    expectedWorkflowName: NAME,
     allowedSourceEvents: 'push',
-    branch: 'main',
+    expectedBranch: 'main',
     requireFreshMain: false,
-    sourceRef: SHA,
-    ciRunId: String(RUN_ID),
     fetchImpl: api({}),
     ...overrides,
   };
 }
 
-test('main CI push is proven by GET of ci-run-id and matching source-ref SHA', async () => {
+test('workflow_run proof accepts a GET-validated same-repo success', async () => {
   const resolved = await resolveReleaseSource(
     baseOptions({
+      sourceRunId: String(RUN_ID),
       fetchImpl: api({
         [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
       }),
     }),
   );
-  assert.deepEqual(resolved, { sha: SHA, 'run-id': String(RUN_ID) });
+  assert.deepEqual(resolved, {
+    'target-sha': SHA,
+    'source-run-id': String(RUN_ID),
+  });
 });
 
-test('tag CI push may use the tag name as head_branch instead of main', async () => {
+test('hermes tag CI matches when expected-branch is the tag name', async () => {
   const resolved = await resolveReleaseSource(
     baseOptions({
-      workflowPath: TESTS_PATH,
-      workflowName: TESTS_NAME,
-      sourceRef: 'v1.2.3',
+      eventName: 'push',
+      expectedWorkflowPath: TESTS_PATH,
+      expectedWorkflowName: TESTS_NAME,
+      expectedBranch: 'v1.2.3',
+      tag: 'v1.2.3',
+      sourceRunId: String(RUN_ID),
       fetchImpl: api({
         [`/repos/${REPO}/git/ref/tags/v1.2.3`]: {
           ref: 'refs/tags/v1.2.3',
@@ -108,84 +115,114 @@ test('tag CI push may use the tag name as head_branch instead of main', async ()
       }),
     }),
   );
-  assert.equal(resolved.sha, SHA);
-  assert.equal(resolved['run-id'], String(RUN_ID));
+  assert.equal(resolved['target-sha'], SHA);
+  assert.equal(resolved['source-run-id'], String(RUN_ID));
 });
 
-test('tag CI with source-ref SHA still accepts head_branch tag name', async () => {
-  const resolved = await resolveReleaseSource(
-    baseOptions({
-      sourceRef: SHA,
-      fetchImpl: api({
-        [`/repos/${REPO}/git/ref/tags/v1.2.3`]: {
-          ref: 'refs/tags/v1.2.3',
-          object: { type: 'commit', sha: SHA },
-        },
-        [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload({
-          event: 'push',
-          head_branch: 'v1.2.3',
-        }),
-      }),
-    }),
-  );
-  assert.equal(resolved.sha, SHA);
-});
-
-test('main CI for a later tag keeps head_branch=main and the same SHA', async () => {
-  const resolved = await resolveReleaseSource(
-    baseOptions({
-      sourceRef: 'refs/tags/v1.2.3',
-      fetchImpl: api({
-        [`/repos/${REPO}/git/ref/tags/v1.2.3`]: {
-          ref: 'refs/tags/v1.2.3',
-          object: { type: 'tag', sha: SHA_C },
-        },
-        [`/repos/${REPO}/git/tags/${SHA_C}`]: {
-          object: { type: 'commit', sha: SHA },
-        },
-        [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload({ head_branch: 'main' }),
-      }),
-    }),
-  );
-  assert.equal(resolved.sha, SHA);
-});
-
-test('source-ref cannot replace proof and must match the GET run SHA', async () => {
-  const fetchImpl = api({
-    [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
-  });
-  await assert.rejects(
-    () => resolveReleaseSource(baseOptions({ sourceRef: SHA_B, fetchImpl })),
-    /does not match run/,
-  );
-  await assert.rejects(
-    () => resolveReleaseSource(baseOptions({ sourceRef: SHA, ciRunId: '', fetchImpl })),
-    /ci-run-id must be a positive integer/,
-  );
-});
-
-test('same-run-proof boolean is rejected', async () => {
+test('tag CI head_branch is not accepted when expected-branch stays main', async () => {
   await assert.rejects(
     () =>
       resolveReleaseSource(
         baseOptions({
-          sameRunProof: true,
+          eventName: 'push',
+          tag: 'v1.2.3',
+          sourceRunId: String(RUN_ID),
+          expectedBranch: 'main',
           fetchImpl: api({
-            [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
+            [`/repos/${REPO}/git/ref/tags/v1.2.3`]: {
+              ref: 'refs/tags/v1.2.3',
+              object: { type: 'commit', sha: SHA },
+            },
+            [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload({
+              event: 'push',
+              head_branch: 'v1.2.3',
+            }),
           }),
         }),
       ),
-    /same-run-proof is not accepted/,
+    /expected "main"/,
   );
 });
 
-test('rejects fork, PR, wrong path/name, failed conclusion and short SHA', async () => {
+test('tag-only proof GET-validates the selected run and does not take another SHA', async () => {
+  let gotRun = false;
+  const fetchImpl = api({
+    [`/repos/${REPO}/git/ref/tags/v1.2.3`]: {
+      ref: 'refs/tags/v1.2.3',
+      object: { type: 'tag', sha: SHA_C },
+    },
+    [`/repos/${REPO}/git/tags/${SHA_C}`]: {
+      object: { type: 'commit', sha: SHA },
+    },
+    [`/repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=completed&per_page=100`]: {
+      workflow_runs: [runPayload({ id: OTHER_RUN, head_sha: SHA_B }), runPayload()],
+    },
+    [`/repos/${REPO}/actions/runs/${RUN_ID}`]: () => {
+      gotRun = true;
+      return jsonResponse(runPayload());
+    },
+  });
+  const resolved = await resolveReleaseSource(
+    baseOptions({ eventName: 'workflow_dispatch', tag: 'v1.2.3', fetchImpl }),
+  );
+  assert.equal(resolved['target-sha'], SHA);
+  assert.equal(gotRun, true);
+});
+
+test('source-sha must match the proven run and cannot replace proof', async () => {
+  const fetchImpl = api({
+    [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
+  });
+  const resolved = await resolveReleaseSource(
+    baseOptions({ sourceRunId: String(RUN_ID), sourceSha: SHA, fetchImpl }),
+  );
+  assert.equal(resolved['target-sha'], SHA);
+  await assert.rejects(
+    () => resolveReleaseSource(baseOptions({ sourceRunId: String(RUN_ID), sourceSha: SHA_B, fetchImpl })),
+    /does not match proven SHA/,
+  );
+  await assert.rejects(
+    () => resolveReleaseSource(baseOptions({ sourceSha: SHA, fetchImpl })),
+    /Provide source-run-id or tag/,
+  );
+});
+
+test('GITHUB_EVENT_NAME is required and pull_request is rejected unconditionally', async () => {
+  const fetchImpl = api({
+    [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
+  });
+  await assert.rejects(
+    () => resolveReleaseSource(baseOptions({ sourceRunId: String(RUN_ID), eventName: '', fetchImpl })),
+    /GITHUB_EVENT_NAME is required/,
+  );
+  await assert.rejects(
+    () =>
+      resolveReleaseSource(
+        baseOptions({ sourceRunId: String(RUN_ID), eventName: 'pull_request', fetchImpl }),
+      ),
+    /Rejected deploy event "pull_request"/,
+  );
+  await assert.rejects(
+    () =>
+      resolveReleaseSource(
+        baseOptions({ sourceRunId: String(RUN_ID), eventName: 'pull_request_target', fetchImpl }),
+      ),
+    /Rejected deploy event/,
+  );
+  const nested = await resolveReleaseSource(
+    baseOptions({ sourceRunId: String(RUN_ID), eventName: 'workflow_call', fetchImpl }),
+  );
+  assert.equal(nested['target-sha'], SHA);
+});
+
+test('rejects fork, PR CI, wrong path/name, failed conclusion and short SHA', async () => {
   const cases = [
     [{ head_repository: { full_name: 'evil/hermes' } }, /head repository/],
     [{ repository: { full_name: 'evil/hermes' } }, /Run repository/],
     [{ event: 'pull_request' }, /untrusted source event/],
     [{ path: '.github/workflows/other.yml' }, /workflow path/],
     [{ name: 'Other' }, /workflow name/],
+    [{ head_branch: 'feature' }, /source branch/],
     [{ conclusion: 'failure' }, /not success/],
     [{ status: 'in_progress', conclusion: null }, /not completed/],
     [{ head_sha: 'abc' }, /full 40-character/],
@@ -196,6 +233,7 @@ test('rejects fork, PR, wrong path/name, failed conclusion and short SHA', async
       () =>
         resolveReleaseSource(
           baseOptions({
+            sourceRunId: String(RUN_ID),
             fetchImpl: api({
               [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(override),
             }),
@@ -206,25 +244,12 @@ test('rejects fork, PR, wrong path/name, failed conclusion and short SHA', async
   }
 });
 
-test('feature head_branch that is not the branch and not a tag for the SHA fails', async () => {
+test('fresh main check fails closed for stale continuous deploys and is skipped for tags', async () => {
   await assert.rejects(
     () =>
       resolveReleaseSource(
         baseOptions({
-          fetchImpl: api({
-            [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload({ head_branch: 'feature' }),
-          }),
-        }),
-      ),
-    /GitHub API 404/,
-  );
-});
-
-test('freshness applies to default-branch CI and is skipped for tag CI', async () => {
-  await assert.rejects(
-    () =>
-      resolveReleaseSource(
-        baseOptions({
+          sourceRunId: String(RUN_ID),
           requireFreshMain: true,
           fetchImpl: api({
             [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
@@ -239,72 +264,55 @@ test('freshness applies to default-branch CI and is skipped for tag CI', async (
   );
   const tagged = await resolveReleaseSource(
     baseOptions({
+      sourceRunId: String(RUN_ID),
+      tag: 'v1.2.3',
       requireFreshMain: true,
-      sourceRef: 'v1.2.3',
-      fetchImpl: api({
-        [`/repos/${REPO}/git/ref/tags/v1.2.3`]: {
-          ref: 'refs/tags/v1.2.3',
-          object: { type: 'commit', sha: SHA },
-        },
-        [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload({ head_branch: 'v1.2.3' }),
-      }),
-    }),
-  );
-  assert.equal(tagged.sha, SHA);
-});
-
-test('package-version-match compares a vX.Y.Z source-ref with package.json', async () => {
-  const pkg = Buffer.from(JSON.stringify({ version: '1.2.3' })).toString('base64');
-  const resolved = await resolveReleaseSource(
-    baseOptions({
-      sourceRef: 'v1.2.3',
-      packageVersionMatch: true,
       fetchImpl: api({
         [`/repos/${REPO}/git/ref/tags/v1.2.3`]: {
           ref: 'refs/tags/v1.2.3',
           object: { type: 'commit', sha: SHA },
         },
         [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
-        [`/repos/${REPO}/contents/package.json?ref=${SHA}`]: { encoding: 'base64', content: pkg },
       }),
     }),
   );
-  assert.equal(resolved.sha, SHA);
+  assert.equal(tagged['target-sha'], SHA);
 });
 
 test('missing run, invalid run id and untrusted allowed events fail closed', async () => {
   await assert.rejects(
-    () => resolveReleaseSource(baseOptions({ fetchImpl: api({}) })),
+    () => resolveReleaseSource(baseOptions({ sourceRunId: String(RUN_ID), fetchImpl: api({}) })),
     /GitHub API 404/,
   );
   await assert.rejects(
-    () => resolveReleaseSource(baseOptions({ ciRunId: 'latest' })),
+    () => resolveReleaseSource(baseOptions({ sourceRunId: 'latest' })),
     /positive integer/,
   );
   assert.ok(FORBIDDEN_SOURCE_EVENTS.includes('pull_request_target'));
   assert.throws(() => parseAllowedEvents('push,pull_request'), /cannot include untrusted/);
 });
 
-test('cli writes sha and run-id without interpolating untrusted refs', async () => {
+test('cli reads GITHUB_EVENT_NAME and writes target-sha and source-run-id', async () => {
   const outputFile = join(mkdtempSync(join(tmpdir(), 'release-source-')), 'out');
   const resolved = await runCli(
     {
       GITHUB_TOKEN: 'test-token',
       GITHUB_REPOSITORY: REPO,
+      GITHUB_EVENT_NAME: 'workflow_run',
       GITHUB_OUTPUT: outputFile,
-      RELEASE_WORKFLOW_PATH: PATH,
-      RELEASE_WORKFLOW_NAME: NAME,
+      RELEASE_EXPECTED_WORKFLOW_PATH: PATH,
+      RELEASE_EXPECTED_WORKFLOW_NAME: NAME,
       RELEASE_ALLOWED_SOURCE_EVENTS: 'push',
-      RELEASE_BRANCH: 'main',
-      RELEASE_SOURCE_REF: SHA,
-      RELEASE_CI_RUN_ID: String(RUN_ID),
+      RELEASE_EXPECTED_BRANCH: 'main',
+      RELEASE_SOURCE_RUN_ID: String(RUN_ID),
       RELEASE_REQUIRE_FRESH_MAIN: 'false',
     },
     api({
       [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
     }),
   );
-  assert.equal(resolved.sha, SHA);
-  assert.match(readFileSync(outputFile, 'utf8'), new RegExp(`sha=${SHA}`));
-  assert.match(readFileSync(outputFile, 'utf8'), new RegExp(`run-id=${RUN_ID}`));
+  assert.equal(resolved['target-sha'], SHA);
+  const text = readFileSync(outputFile, 'utf8');
+  assert.match(text, new RegExp(`target-sha=${SHA}`));
+  assert.match(text, new RegExp(`source-run-id=${RUN_ID}`));
 });

@@ -36,23 +36,25 @@ test('deploy-worker pins verified Actions SHAs and requires an exact Wrangler ve
   assert.match(workflow, /Locked local wrangler binary not found/);
 });
 
-test('release-source exposes generic proof inputs and sha/run-id outputs', () => {
+test('release-source exposes run/tag/manual inputs and target-sha/source-run-id outputs', () => {
   for (const name of [
     'github-token',
-    'workflow-path',
-    'workflow-name',
-    'branch',
-    'source-ref',
-    'ci-run-id',
+    'expected-workflow-path',
+    'expected-workflow-name',
+    'expected-branch',
+    'source-run-id',
+    'tag',
+    'source-sha',
+    'require-fresh-main',
   ]) {
     assert.match(action, new RegExp(`^  ${name}:`, 'm'));
   }
-  for (const name of ['sha', 'run-id']) {
+  for (const name of ['target-sha', 'source-run-id']) {
     assert.match(action, new RegExp(`^  ${name}:`, 'm'));
   }
   assert.doesNotMatch(action, /^  same-run-proof:/m);
-  assert.doesNotMatch(action, /^  target-sha:/m);
-  assert.doesNotMatch(action, /^  source-run-id:/m);
+  assert.doesNotMatch(action, /^  caller-event-name:/m);
+  assert.doesNotMatch(action, /^  source-ref:/m);
 });
 
 test('self-test-release runs helper tests and does not deploy', () => {

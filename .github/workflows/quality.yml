@@ -128,6 +128,10 @@ on:
         description: "Worker directory"
         type: string
         default: "worker"
+      worker-prepare-command:
+        description: "Optional setup command in worker directory (defaults to empty, preserving legacy bun-quality behavior)"
+        type: string
+        default: ""
 
       package-check:
         description: "Run package validation checks (publint, attw, etc.)"
@@ -209,7 +213,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@941e0dc778dde827ccaf4f17a6062fbec4b057d3
+        uses: nocoo/base-ci/.github/actions/setup-js@8f984a8824a79407fc8953dfa4533cd0e75b9988
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -217,6 +221,27 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
           install-policy: ${{ inputs.install-policy }}
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure test environment and CI flag
+        shell: bash
+        env:
+          IN_ENV_JSON: ${{ inputs.env-json }}
+        run: |
+          set -euo pipefail
+          echo "CI=true" >> "$GITHUB_ENV"
+          if [ -n "$IN_ENV_JSON" ] && [ "$IN_ENV_JSON" != "{}" ]; then
+            python3 -c '
+          import os, sys, json
+          data = json.loads(os.environ.get("IN_ENV_JSON", "{}"))
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              for k, v in data.items():
+                  if not isinstance(k, str) or not k.isidentifier():
+                      sys.stderr.write(f"Invalid env var name: {k}\n")
+                      sys.exit(1)
+                  delim = "EOF_" + os.urandom(8).hex()
+                  f.write(f"{k}<<{delim}\n{v}\n{delim}\n")
+          '
+          fi
 
       - name: Validate disabled checks explanations
         shell: bash
@@ -260,21 +285,6 @@ jobs:
         run: |
           echo "Executing prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
-
-      - name: Inject env-json
-        if: inputs.env-json != '{}' && inputs.env-json != ''
-        shell: bash
-        env:
-          IN_ENV_JSON: ${{ inputs.env-json }}
-        run: |
-          python3 -c '
-          import os, sys, json
-          data = json.loads(os.environ.get("IN_ENV_JSON", "{}"))
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-              for k, v in data.items():
-                  delim = "EOF_" + os.urandom(8).hex()
-                  f.write(f"{k}<<{delim}\n{v}\n{delim}\n")
-          '
 
       - name: Static Check - Typecheck
         if: inputs.typecheck
@@ -381,6 +391,11 @@ jobs:
     uses: ./.github/workflows/security.yml
     with:
       working-directory: ${{ inputs.working-directory }}
+      package-manager: ${{ inputs.security-command != '' && inputs.package-manager || 'none' }}
+      runtime-version: ${{ inputs.runtime-version }}
+      node-version: ${{ inputs.node-version }}
+      install-policy: ${{ inputs.install-policy }}
+      extra-install-dirs: ${{ inputs.extra-install-dirs }}
       lockfiles: ${{ inputs.lockfiles != '' && inputs.lockfiles || (inputs.package-manager == 'bun' && 'bun.lock' || (inputs.package-manager == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json')) }}
       osv-config: ${{ inputs.osv-config }}
       gitleaks-config: ${{ inputs.gitleaks-config }}
@@ -407,7 +422,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@941e0dc778dde827ccaf4f17a6062fbec4b057d3
+        uses: nocoo/base-ci/.github/actions/setup-js@8f984a8824a79407fc8953dfa4533cd0e75b9988
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -415,6 +430,27 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
           install-policy: ${{ inputs.install-policy }}
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure build environment and CI flag
+        shell: bash
+        env:
+          IN_ENV_JSON: ${{ inputs.env-json }}
+        run: |
+          set -euo pipefail
+          echo "CI=true" >> "$GITHUB_ENV"
+          if [ -n "$IN_ENV_JSON" ] && [ "$IN_ENV_JSON" != "{}" ]; then
+            python3 -c '
+          import os, sys, json
+          data = json.loads(os.environ.get("IN_ENV_JSON", "{}"))
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              for k, v in data.items():
+                  if not isinstance(k, str) or not k.isidentifier():
+                      sys.stderr.write(f"Invalid env var name: {k}\n")
+                      sys.exit(1)
+                  delim = "EOF_" + os.urandom(8).hex()
+                  f.write(f"{k}<<{delim}\n{v}\n{delim}\n")
+          '
+          fi
 
       - name: Prepare environment
         if: inputs.prepare-command != ''
@@ -515,7 +551,7 @@ jobs:
       working-directory: ${{ inputs.worker-directory }}
       install-policy: ${{ inputs.install-policy }}
       extra-install-dirs: ${{ inputs.extra-install-dirs }}
-      pre-command: ${{ inputs.prepare-command }}
+      pre-command: ${{ inputs.worker-prepare-command }}
       command: ${{ inputs.worker-command != '' && inputs.worker-command || (inputs.package-manager == 'bun' && 'bun run test' || 'npm run test') }}
       env-json: ${{ inputs.env-json }}
 

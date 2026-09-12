@@ -1,0 +1,201 @@
+# Reusable test job workflow supporting standard JS environments and native runtime=none runners.
+# Provides checkout, dependency setup, browser installation (optional), pre-command, command execution,
+# explicit env-json injection, and artifact upload.
+
+name: Test Job
+
+on:
+  workflow_call:
+    inputs:
+      # Runner and environment
+      runner:
+        description: "GitHub Actions runner (e.g. ubuntu-latest, macos-latest)"
+        type: string
+        default: "ubuntu-latest"
+      runtime:
+        description: "Runtime ecosystem: bun, npm, pnpm, or none (none for native python/bash/swift/etc.)"
+        type: string
+        default: "bun"
+      runtime-version:
+        description: "Runtime version for bun/pnpm (empty = resolve from .bun-version / default)"
+        type: string
+        default: ""
+      node-version:
+        description: "Node.js version (empty = resolve from .nvmrc / .node-version / default 26.8.1)"
+        type: string
+        default: ""
+      working-directory:
+        description: "Working directory relative to repo root"
+        type: string
+        default: "."
+
+      # Setup and supply-chain policies
+      install-policy:
+        description: "Lifecycle script policy: blocked, trusted, or project"
+        type: string
+        default: "blocked"
+      extra-install-dirs:
+        description: "Newline or comma-separated extra directories needing install"
+        type: string
+        default: ""
+
+      # Browser / Playwright support
+      browser:
+        description: "Playwright browser to install (e.g. chromium, firefox, webkit, or all). Empty = no browser install"
+        type: string
+        default: ""
+      browser-working-directory:
+        description: "Directory containing Playwright config/package (defaults to working-directory)"
+        type: string
+        default: ""
+
+      # Commands
+      pre-command:
+        description: "Optional setup command before the main test command"
+        type: string
+        default: ""
+      command:
+        description: "Test command to execute (required unless empty intentional run)"
+        type: string
+        required: true
+
+      # Env vars (explicit JSON string: {"KEY": "VAL"})
+      env-json:
+        description: "Explicit non-sensitive environment variables as a JSON string"
+        type: string
+        default: "{}"
+
+      # Timeout
+      timeout-minutes:
+        description: "Job timeout in minutes"
+        type: number
+        default: 20
+
+      # Artifacts / Reports
+      artifact-name:
+        description: "Name of artifact to upload (empty = no upload)"
+        type: string
+        default: ""
+      artifact-path:
+        description: "File or directory path to upload"
+        type: string
+        default: ""
+      artifact-retention-days:
+        description: "Artifact retention days"
+        type: number
+        default: 7
+
+    outputs:
+      job-status:
+        description: "Execution status of the test job"
+        value: ${{ jobs.test.outputs.job-status }}
+      tested-sha:
+        description: "Commit SHA tested by this job"
+        value: ${{ jobs.test.outputs.tested-sha }}
+
+jobs:
+  test:
+    name: "Test (${{ inputs.runtime }} on ${{ inputs.runner }})"
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    outputs:
+      job-status: ${{ steps.step-result.outputs.status }}
+      tested-sha: ${{ steps.step-result.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        if: inputs.runtime != 'none'
+        uses: nocoo/base-ci/.github/actions/setup-js@9de725a1a13dd21f2580396d8d766e4a81ea9be2
+        with:
+          package-manager: ${{ inputs.runtime }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Install Playwright browsers
+        if: inputs.browser != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          PW_DIR="${{ inputs.browser-working-directory }}"
+          if [ -z "$PW_DIR" ]; then
+            PW_DIR="${{ inputs.working-directory }}"
+          fi
+          echo "Installing Playwright browsers (${{ inputs.browser }}) in '$PW_DIR'..."
+          pushd "$PW_DIR" > /dev/null
+          if [ "${{ inputs.runtime }}" = "bun" ]; then
+            bunx playwright install --with-deps ${{ inputs.browser }}
+          elif [ "${{ inputs.runtime }}" = "pnpm" ]; then
+            pnpm exec playwright install --with-deps ${{ inputs.browser }}
+          else
+            npx playwright install --with-deps ${{ inputs.browser }}
+          fi
+          popd > /dev/null
+
+      - name: Pre-command
+        if: inputs.pre-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          # Parse env-json safely and export to GITHUB_ENV for current step context if any
+          echo "Executing pre-command..."
+          ${{ inputs.pre-command }}
+
+      - name: Run test command
+        id: run-test
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+
+          # Validate and export env-json safely
+          ENV_JSON='${{ inputs.env-json }}'
+          if [ -n "$ENV_JSON" ] && [ "$ENV_JSON" != "{}" ]; then
+            python3 -c '
+          import os, sys, json
+          raw = sys.argv[1]
+          try:
+              data = json.loads(raw)
+              if not isinstance(data, dict):
+                  sys.stderr.write("env-json must be a JSON object\n")
+                  sys.exit(1)
+              with open(os.environ["GITHUB_ENV"], "a") as env_file:
+                  for k, v in data.items():
+                      if not isinstance(k, str) or not k.isidentifier():
+                          sys.stderr.write(f"Invalid env var name: {k}\n")
+                          sys.exit(1)
+                      # Write to GITHUB_ENV using delimiter syntax for multi-line safety
+                      delimiter = "EOF_" + os.urandom(8).hex()
+                      env_file.write(f"{k}<<{delimiter}\n{v}\n{delimiter}\n")
+          except Exception as e:
+              sys.stderr.write(f"Failed to parse env-json: {e}\n")
+              sys.exit(1)
+          ' "$ENV_JSON"
+          fi
+
+          echo "Running command: ${{ inputs.command }}"
+          ${{ inputs.command }}
+
+      - name: Record step result and SHA
+        id: step-result
+        if: always()
+        shell: bash
+        run: |
+          echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        if: inputs.artifact-name != '' && inputs.artifact-path != '' && !cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-path }}
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: error

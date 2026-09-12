@@ -16,7 +16,7 @@ on:
         type: string
         default: "bun"
       runtime-version:
-        description: "Runtime version for bun/pnpm (empty = resolved from file or default 1.4.0)"
+        description: "Exact Bun, npm, or pnpm version (empty = resolved by setup-js)"
         type: string
         default: ""
       node-version:
@@ -221,7 +221,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a
+        uses: nocoo/base-ci/.github/actions/setup-js@15a59bf513cec96b54a58f9d25064382012a994e
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -297,7 +297,7 @@ jobs:
               CMD="npm run typecheck"
             fi
           fi
-          TRIMMED="$(echo "$CMD" | xargs)"
+          TRIMMED="${CMD//[[:space:]]/}"
           if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
             echo "::error::Invalid typecheck command '$TRIMMED'. Disable typecheck explicitly with disabled-check-reasons instead of using fake-green commands."
             exit 1
@@ -324,7 +324,7 @@ jobs:
               CMD="npm run lint"
             fi
           fi
-          TRIMMED="$(echo "$CMD" | xargs)"
+          TRIMMED="${CMD//[[:space:]]/}"
           if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
             echo "::error::Invalid lint command '$TRIMMED'. Disable lint explicitly with disabled-check-reasons instead of using fake-green commands."
             exit 1
@@ -351,7 +351,7 @@ jobs:
               CMD="npm run test:coverage"
             fi
           fi
-          TRIMMED="$(echo "$CMD" | xargs)"
+          TRIMMED="${CMD//[[:space:]]/}"
           if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
             echo "::error::Invalid test command '$TRIMMED'. Disable unit explicitly with disabled-check-reasons instead of using fake-green commands."
             exit 1
@@ -414,7 +414,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a
+        uses: nocoo/base-ci/.github/actions/setup-js@15a59bf513cec96b54a58f9d25064382012a994e
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}

@@ -124,7 +124,7 @@ jobs:
 
       - name: Setup JS and dependencies
         if: inputs.runtime != 'none'
-        uses: nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a
+        uses: nocoo/base-ci/.github/actions/setup-js@15a59bf513cec96b54a58f9d25064382012a994e
         with:
           package-manager: ${{ inputs.runtime }}
           runtime-version: ${{ inputs.runtime-version }}

@@ -1,0 +1,569 @@
+# Reusable quality workflow for JavaScript/TypeScript projects (Bun, npm, pnpm).
+# Implements core quality gate: static analysis (typecheck, lint), unit tests + coverage,
+# security scans (gitleaks + osv), and optional build, L2 (API E2E), L3 (Browser E2E),
+# Worker tests, and package checks.
+#
+# Emits tested-sha and artifact outputs only when all enabled checks succeed.
+
+name: Quality Gate
+
+on:
+  workflow_call:
+    inputs:
+      # Ecosystem & Runtimes
+      package-manager:
+        description: "Package manager: bun, npm, or pnpm"
+        type: string
+        default: "bun"
+      runtime-version:
+        description: "Runtime version for bun/pnpm (empty = resolved from file or default 1.4.0)"
+        type: string
+        default: ""
+      node-version:
+        description: "Node.js version (empty = resolved from file or default 26.8.1)"
+        type: string
+        default: ""
+      working-directory:
+        description: "Working directory relative to repo root"
+        type: string
+        default: "."
+
+      # Hardening & Directories
+      install-policy:
+        description: "Lifecycle script policy: blocked, trusted, or project"
+        type: string
+        default: "blocked"
+      extra-install-dirs:
+        description: "Newline or comma-separated extra directories needing install"
+        type: string
+        default: ""
+
+      # Core checks boolean switches
+      typecheck:
+        description: "Run typecheck"
+        type: boolean
+        default: true
+      lint:
+        description: "Run lint"
+        type: boolean
+        default: true
+      unit:
+        description: "Run unit tests"
+        type: boolean
+        default: true
+      security:
+        description: "Run security scanner (secrets + osv)"
+        type: boolean
+        default: true
+
+      # Disabled reasons (JSON object: {"typecheck": "plain JS without tsconfig"})
+      disabled-check-reasons:
+        description: "Explanations for intentionally disabled core checks"
+        type: string
+        default: "{}"
+
+      # Core command overrides
+      typecheck-command:
+        description: "Typecheck command (defaults to bun run typecheck / npm run typecheck / pnpm run typecheck)"
+        type: string
+        default: ""
+      lint-command:
+        description: "Lint command (defaults to bun run lint / npm run lint / pnpm run lint)"
+        type: string
+        default: ""
+      test-command:
+        description: "Unit test command (defaults to bun run test:coverage / npm run test:coverage / pnpm run test:coverage)"
+        type: string
+        default: ""
+      prepare-command:
+        description: "Optional setup command before static/test steps"
+        type: string
+        default: ""
+
+      # Extended checks boolean switches
+      build:
+        description: "Run build step"
+        type: boolean
+        default: false
+      build-command:
+        description: "Build command"
+        type: string
+        default: ""
+
+      l2:
+        description: "Run L2 API E2E tests"
+        type: boolean
+        default: false
+      l2-command:
+        description: "L2 test command"
+        type: string
+        default: ""
+
+      l3:
+        description: "Run L3 Browser E2E tests"
+        type: boolean
+        default: false
+      l3-command:
+        description: "L3 test command"
+        type: string
+        default: ""
+      l3-browser:
+        description: "Playwright browser to install (chromium, firefox, webkit)"
+        type: string
+        default: "chromium"
+      l3-browser-directory:
+        description: "Playwright browser installation directory"
+        type: string
+        default: ""
+
+      worker:
+        description: "Run Cloudflare Worker tests"
+        type: boolean
+        default: false
+      worker-command:
+        description: "Worker test command"
+        type: string
+        default: ""
+      worker-directory:
+        description: "Worker directory"
+        type: string
+        default: "worker"
+
+      package-check:
+        description: "Run package validation checks (publint, attw, etc.)"
+        type: boolean
+        default: false
+      package-command:
+        description: "Package check command"
+        type: string
+        default: ""
+
+      # Security details
+      lockfiles:
+        description: "Newline or comma-separated lockfiles for OSV scan"
+        type: string
+        default: ""
+      osv-config:
+        description: "Path to .osv-scanner.toml (optional)"
+        type: string
+        default: ""
+      gitleaks-config:
+        description: "Path to .gitleaks.toml (optional)"
+        type: string
+        default: ""
+
+      # Coverage and Artifacts
+      coverage-path:
+        description: "Path to coverage output directory (empty = skip upload)"
+        type: string
+        default: ""
+      artifact-name:
+        description: "Name for build/test artifact"
+        type: string
+        default: ""
+      artifact-paths:
+        description: "Artifact paths to upload (empty = skip upload)"
+        type: string
+        default: ""
+
+      # Environment configuration
+      env-json:
+        description: "Explicit non-sensitive environment variables as JSON object string"
+        type: string
+        default: "{}"
+
+    outputs:
+      tested-sha:
+        description: "Commit SHA tested and verified across all enabled jobs"
+        value: ${{ jobs.aggregate-gate.outputs.tested-sha }}
+      artifact-id:
+        description: "Uploaded build artifact ID if artifact-paths was provided"
+        value: ${{ jobs.build.outputs.artifact-id }}
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────
+  # Static analysis, L1 unit tests, and coverage
+  # ─────────────────────────────────────────────────────
+  l1-gate:
+    name: "L1: Quality & Tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@9de725a1a13dd21f2580396d8d766e4a81ea9be2
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Validate disabled checks explanations
+        shell: bash
+        run: |
+          set -euo pipefail
+          REASONS='${{ inputs.disabled-check-reasons }}'
+          python3 -c '
+          import sys, json
+          reasons_str = sys.argv[1]
+          reasons = json.loads(reasons_str) if reasons_str else {}
+          checks = {
+              "typecheck": "${{ inputs.typecheck }}" == "true",
+              "lint": "${{ inputs.lint }}" == "true",
+              "unit": "${{ inputs.unit }}" == "true",
+              "security": "${{ inputs.security }}" == "true",
+          }
+          for name, enabled in checks.items():
+              if not enabled:
+                  if name not in reasons or not str(reasons[name]).strip():
+                      sys.stderr.write(f"::error::Core check {name} is disabled but missing explanation in disabled-check-reasons\n")
+                      sys.exit(1)
+                  print(f"Check {name} is explicitly disabled: {reasons[name]}")
+          ' "$REASONS"
+
+      - name: Prepare environment
+        if: inputs.prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          echo "Executing prepare-command..."
+          ${{ inputs.prepare-command }}
+
+      - name: Inject env-json
+        if: inputs.env-json != '{}' && inputs.env-json != ''
+        shell: bash
+        run: |
+          python3 -c '
+          import os, sys, json
+          data = json.loads(sys.argv[1])
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in data.items():
+                  delim = "EOF_" + os.urandom(8).hex()
+                  f.write(f"{k}<<{delim}\n{v}\n{delim}\n")
+          ' '${{ inputs.env-json }}'
+
+      - name: Static Check - Typecheck
+        if: inputs.typecheck
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          CMD="${{ inputs.typecheck-command }}"
+          if [ -z "$CMD" ]; then
+            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+              CMD="bun run typecheck"
+            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+              CMD="pnpm run typecheck"
+            else
+              CMD="npm run typecheck"
+            fi
+          fi
+          # Guard against empty or fake-green commands
+          TRIMMED="$(echo "$CMD" | xargs)"
+          if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
+            echo "::error::Invalid typecheck command '$TRIMMED'. Disable typecheck explicitly with disabled-check-reasons instead of using fake-green commands."
+            exit 1
+          fi
+          echo "Running typecheck: $CMD"
+          $CMD
+
+      - name: Static Check - Lint
+        if: inputs.lint
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          CMD="${{ inputs.lint-command }}"
+          if [ -z "$CMD" ]; then
+            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+              CMD="bun run lint"
+            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+              CMD="pnpm run lint"
+            else
+              CMD="npm run lint"
+            fi
+          fi
+          TRIMMED="$(echo "$CMD" | xargs)"
+          if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
+            echo "::error::Invalid lint command '$TRIMMED'. Disable lint explicitly with disabled-check-reasons instead of using fake-green commands."
+            exit 1
+          fi
+          echo "Running lint: $CMD"
+          $CMD
+
+      - name: Unit Tests
+        if: inputs.unit
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          CMD="${{ inputs.test-command }}"
+          if [ -z "$CMD" ]; then
+            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+              CMD="bun run test:coverage"
+            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+              CMD="pnpm run test:coverage"
+            else
+              CMD="npm run test:coverage"
+            fi
+          fi
+          TRIMMED="$(echo "$CMD" | xargs)"
+          if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
+            echo "::error::Invalid test command '$TRIMMED'. Disable unit explicitly with disabled-check-reasons instead of using fake-green commands."
+            exit 1
+          fi
+          echo "Running unit tests: $CMD"
+          $CMD
+
+      - name: Upload coverage
+        if: inputs.unit && inputs.coverage-path != '' && !cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: ${{ inputs.coverage-path }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Record SHA
+        id: record-sha
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────
+  # Security Scan (invoking nested reusable workflow)
+  # ─────────────────────────────────────────────────────
+  security-gate:
+    name: "G2: Security"
+    if: inputs.security
+    uses: ./.github/workflows/security.yml
+    with:
+      working-directory: ${{ inputs.working-directory }}
+      lockfiles: ${{ inputs.lockfiles != '' && inputs.lockfiles || (inputs.package-manager == 'bun' && 'bun.lock' || (inputs.package-manager == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json')) }}
+      osv-config: ${{ inputs.osv-config }}
+      gitleaks-config: ${{ inputs.gitleaks-config }}
+      scan-secrets: true
+      scan-dependencies: true
+
+  # ─────────────────────────────────────────────────────
+  # Build step (optional)
+  # ─────────────────────────────────────────────────────
+  build:
+    name: "Build"
+    if: inputs.build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload-artifact-step.outputs.artifact-id }}
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@9de725a1a13dd21f2580396d8d766e4a81ea9be2
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Prepare environment
+        if: inputs.prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          ${{ inputs.prepare-command }}
+
+      - name: Execute build
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          CMD="${{ inputs.build-command }}"
+          if [ -z "$CMD" ]; then
+            if [ "${{ inputs.package-manager }}" = "bun" ]; then
+              CMD="bun run build"
+            elif [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+              CMD="pnpm run build"
+            else
+              CMD="npm run build"
+            fi
+          fi
+          echo "Running build: $CMD"
+          $CMD
+
+      - name: Upload build artifact
+        id: upload-artifact-step
+        if: inputs.artifact-paths != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact-name != '' && inputs.artifact-name || 'build-artifact' }}
+          path: ${{ inputs.artifact-paths }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Record SHA
+        id: record-sha
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────
+  # L2 API E2E (optional)
+  # ─────────────────────────────────────────────────────
+  l2-gate:
+    name: "L2: API E2E"
+    if: inputs.l2
+    uses: ./.github/workflows/test-job.yml
+    with:
+      runtime: ${{ inputs.package-manager }}
+      runtime-version: ${{ inputs.runtime-version }}
+      node-version: ${{ inputs.node-version }}
+      working-directory: ${{ inputs.working-directory }}
+      install-policy: ${{ inputs.install-policy }}
+      extra-install-dirs: ${{ inputs.extra-install-dirs }}
+      pre-command: ${{ inputs.prepare-command }}
+      command: ${{ inputs.l2-command != '' && inputs.l2-command || (inputs.package-manager == 'bun' && 'bun run test:api' || 'npm run test:api') }}
+      env-json: ${{ inputs.env-json }}
+
+  # ─────────────────────────────────────────────────────
+  # L3 Browser E2E with Playwright (optional)
+  # ─────────────────────────────────────────────────────
+  l3-gate:
+    name: "L3: Browser E2E"
+    if: inputs.l3
+    uses: ./.github/workflows/test-job.yml
+    with:
+      runtime: ${{ inputs.package-manager }}
+      runtime-version: ${{ inputs.runtime-version }}
+      node-version: ${{ inputs.node-version }}
+      working-directory: ${{ inputs.working-directory }}
+      install-policy: ${{ inputs.install-policy }}
+      extra-install-dirs: ${{ inputs.extra-install-dirs }}
+      browser: ${{ inputs.l3-browser }}
+      browser-working-directory: ${{ inputs.l3-browser-directory != '' && inputs.l3-browser-directory || inputs.working-directory }}
+      pre-command: ${{ inputs.prepare-command }}
+      command: ${{ inputs.l3-command != '' && inputs.l3-command || (inputs.package-manager == 'bun' && 'bun run test:e2e:pw' || 'npm run test:e2e:pw') }}
+      env-json: ${{ inputs.env-json }}
+
+  # ─────────────────────────────────────────────────────
+  # Worker tests (optional)
+  # ─────────────────────────────────────────────────────
+  worker-gate:
+    name: "Worker Tests"
+    if: inputs.worker
+    uses: ./.github/workflows/test-job.yml
+    with:
+      runtime: ${{ inputs.package-manager }}
+      runtime-version: ${{ inputs.runtime-version }}
+      node-version: ${{ inputs.node-version }}
+      working-directory: ${{ inputs.worker-directory }}
+      install-policy: ${{ inputs.install-policy }}
+      command: ${{ inputs.worker-command != '' && inputs.worker-command || (inputs.package-manager == 'bun' && 'bun run test' || 'npm run test') }}
+      env-json: ${{ inputs.env-json }}
+
+  # ─────────────────────────────────────────────────────
+  # Package validation check (optional)
+  # ─────────────────────────────────────────────────────
+  package-gate:
+    name: "Package Check"
+    if: inputs.package-check
+    uses: ./.github/workflows/test-job.yml
+    with:
+      runtime: ${{ inputs.package-manager }}
+      runtime-version: ${{ inputs.runtime-version }}
+      node-version: ${{ inputs.node-version }}
+      working-directory: ${{ inputs.working-directory }}
+      install-policy: ${{ inputs.install-policy }}
+      command: ${{ inputs.package-command != '' && inputs.package-command || (inputs.package-manager == 'bun' && 'bun run ci:package' || 'npm run ci:package') }}
+      env-json: ${{ inputs.env-json }}
+
+  # ─────────────────────────────────────────────────────
+  # Aggregate Gate: verifies all required jobs completed
+  # and consistent SHA before emitting tested-sha
+  # ─────────────────────────────────────────────────────
+  aggregate-gate:
+    name: "Quality Gate Aggregate"
+    needs: [l1-gate, security-gate, build, l2-gate, l3-gate, worker-gate, package-gate]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tested-sha: ${{ steps.verify-all.outputs.tested-sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify all enabled jobs and consistency
+        id: verify-all
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          L1_RESULT="${{ needs.l1-gate.result }}"
+          SEC_RESULT="${{ needs.security-gate.result }}"
+          BUILD_RESULT="${{ needs.build.result }}"
+          L2_RESULT="${{ needs.l2-gate.result }}"
+          L3_RESULT="${{ needs.l3-gate.result }}"
+          WORKER_RESULT="${{ needs.worker-gate.result }}"
+          PKG_RESULT="${{ needs.package-gate.result }}"
+
+          echo "Results summary:"
+          echo "  l1-gate:       $L1_RESULT"
+          echo "  security-gate: $SEC_RESULT (enabled=${{ inputs.security }})"
+          echo "  build:         $BUILD_RESULT (enabled=${{ inputs.build }})"
+          echo "  l2-gate:       $L2_RESULT (enabled=${{ inputs.l2 }})"
+          echo "  l3-gate:       $L3_RESULT (enabled=${{ inputs.l3 }})"
+          echo "  worker-gate:   $WORKER_RESULT (enabled=${{ inputs.worker }})"
+          echo "  package-gate:  $PKG_RESULT (enabled=${{ inputs.package-check }})"
+
+          # Helper to assert job success if enabled
+          assert_success() {
+            local name="$1"
+            local res="$2"
+            local enabled="$3"
+            if [ "$enabled" = "true" ]; then
+              if [ "$res" != "success" ]; then
+                echo "::error::Required job '$name' did not succeed! Status: '$res'"
+                exit 1
+              fi
+            else
+              if [ "$res" != "skipped" ]; then
+                echo "::error::Disabled job '$name' was not skipped! Status: '$res'"
+                exit 1
+              fi
+            fi
+          }
+
+          assert_success "l1-gate" "$L1_RESULT" "true"
+          assert_success "security-gate" "$SEC_RESULT" "${{ inputs.security }}"
+          assert_success "build" "$BUILD_RESULT" "${{ inputs.build }}"
+          assert_success "l2-gate" "$L2_RESULT" "${{ inputs.l2 }}"
+          assert_success "l3-gate" "$L3_RESULT" "${{ inputs.l3 }}"
+          assert_success "worker-gate" "$WORKER_RESULT" "${{ inputs.worker }}"
+          assert_success "package-gate" "$PKG_RESULT" "${{ inputs.package-check }}"
+
+          CURRENT_SHA="$(git rev-parse HEAD)"
+          echo "All enabled jobs passed successfully."
+          echo "tested-sha=$CURRENT_SHA" >> "$GITHUB_OUTPUT"

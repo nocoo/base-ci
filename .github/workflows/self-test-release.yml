@@ -67,7 +67,7 @@ jobs:
           assert 'inputs.environment' in env_name
           uses = [step.get('uses', '') for step in job['steps'] if isinstance(step, dict)]
           assert any(item.startswith('nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba') for item in uses)
-          assert any(item.startswith('nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a') for item in uses)
+          assert any(item.startswith('nocoo/base-ci/.github/actions/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4') for item in uses)
           assert not any(item.startswith('./.github/actions/release-source') for item in uses)
           text = pathlib.Path('.github/workflows/deploy-worker.yml').read_text()
           assert 'wrangler-action' not in text

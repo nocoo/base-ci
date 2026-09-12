@@ -29,7 +29,7 @@ test('deploy-worker public secrets, lock and environment stay on the called job'
 
 test('deploy-worker pins verified Actions SHAs and requires an exact Wrangler version', () => {
   assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
-  assert.match(workflow, /nocoo\/base-ci\/\.github\/actions\/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a/);
+  assert.match(workflow, /nocoo\/base-ci\/\.github\/actions\/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4/);
   assert.match(workflow, /wrangler-version:[\s\S]*required: true/);
   assert.match(workflow, /parsed != expected/);
   assert.match(workflow, /os.path.abspath/);

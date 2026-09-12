@@ -52,6 +52,10 @@ on:
         description: "Run gitleaks secrets detection"
         type: boolean
         default: true
+      scan-history:
+        description: Scan the full Git history instead of only the checked out directory
+        type: boolean
+        default: false
       scan-dependencies:
         description: "Run OSV dependency vulnerability scanner"
         type: boolean
@@ -90,6 +94,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: ${{ inputs.scan-history && '0' || '1' }}
 
       - name: Setup JS and dependencies (if security-command requires runtime)
         if: inputs.package-manager != 'none'
@@ -112,9 +117,13 @@ jobs:
         env:
           IN_GITLEAKS_CONFIG: ${{ inputs.gitleaks-config }}
           IN_GITLEAKS_IGNORE: ${{ inputs.gitleaks-ignore-path }}
+          SCAN_HISTORY: ${{ inputs.scan-history }}
         run: |
           set -euo pipefail
-          GITLEAKS_ARGS="detect --no-git --no-banner --verbose --redact"
+          GITLEAKS_ARGS="detect --no-banner --verbose --redact"
+          if [ "$SCAN_HISTORY" != true ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --no-git"
+          fi
           if [ -n "$IN_GITLEAKS_CONFIG" ]; then
             GITLEAKS_ARGS="$GITLEAKS_ARGS --config=$IN_GITLEAKS_CONFIG"
           elif [ -f ".gitleaks.toml" ]; then

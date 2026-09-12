@@ -1,0 +1,169 @@
+# Reusable security scanner workflow.
+# Pins gitleaks 8.30.1 and osv-scanner 2.5.1 with verified SHA256 checksums.
+# Runs secret scanning and vulnerability checks across multiple lockfiles (root, worker, rust, etc.).
+
+name: Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory relative to repo root"
+        type: string
+        default: "."
+      lockfiles:
+        description: "Newline or comma-separated lockfile paths to scan with OSV (defaults to bun.lock)"
+        type: string
+        default: "bun.lock"
+      osv-config:
+        description: "Path to .osv-scanner.toml (optional)"
+        type: string
+        default: ""
+      gitleaks-config:
+        description: "Path to .gitleaks.toml (optional)"
+        type: string
+        default: ""
+      scan-secrets:
+        description: "Run gitleaks secrets detection"
+        type: boolean
+        default: true
+      scan-dependencies:
+        description: "Run OSV dependency vulnerability scanner"
+        type: boolean
+        default: true
+
+    outputs:
+      job-status:
+        description: "Security scan status"
+        value: ${{ jobs.security.outputs.job-status }}
+      tested-sha:
+        description: "Commit SHA tested by security scan"
+        value: ${{ jobs.security.outputs.tested-sha }}
+
+jobs:
+  security:
+    name: "Security (Secrets & Vulnerabilities)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      job-status: ${{ steps.step-result.outputs.status }}
+      tested-sha: ${{ steps.step-result.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned v8.30.1 with checksum verification)
+        if: inputs.scan-secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          GITLEAKS_VERSION="8.30.1"
+          GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          TAR_FILE="/tmp/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+
+          curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
+            -o "$TAR_FILE" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+
+          ACTUAL_SHA256="$(sha256sum "$TAR_FILE" | awk '{print $1}')"
+          if [ "$ACTUAL_SHA256" != "$GITLEAKS_SHA256" ]; then
+            echo "::error::Gitleaks checksum mismatch! Expected: $GITLEAKS_SHA256, got: $ACTUAL_SHA256"
+            exit 1
+          fi
+
+          tar -xzf "$TAR_FILE" -C /usr/local/bin gitleaks
+          chmod +x /usr/local/bin/gitleaks
+          rm -f "$TAR_FILE"
+          gitleaks version
+
+      - name: Gitleaks detect
+        if: inputs.scan-secrets
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          GITLEAKS_ARGS="detect --no-git --no-banner --verbose --redact"
+          CFG="${{ inputs.gitleaks-config }}"
+          if [ -n "$CFG" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=$CFG"
+          elif [ -f ".gitleaks.toml" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=.gitleaks.toml"
+          fi
+          echo "Running gitleaks with args: $GITLEAKS_ARGS"
+          gitleaks $GITLEAKS_ARGS
+
+      - name: Install osv-scanner (pinned v2.5.1 with checksum verification)
+        if: inputs.scan-dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          OSV_VERSION="2.5.1"
+          OSV_SHA256="f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
+          BIN_FILE="/tmp/osv-scanner_linux_amd64"
+
+          curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
+            -o "$BIN_FILE" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+
+          ACTUAL_SHA256="$(sha256sum "$BIN_FILE" | awk '{print $1}')"
+          if [ "$ACTUAL_SHA256" != "$OSV_SHA256" ]; then
+            echo "::error::OSV-scanner checksum mismatch! Expected: $OSV_SHA256, got: $ACTUAL_SHA256"
+            exit 1
+          fi
+
+          mv "$BIN_FILE" /usr/local/bin/osv-scanner
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner --version
+
+      - name: OSV dependency scan
+        if: inputs.scan-dependencies
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          RAW_LOCKFILES="${{ inputs.lockfiles }}"
+          CFG="${{ inputs.osv-config }}"
+
+          # Parse lockfiles (split by comma or newline)
+          LOCKFILES=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            TRIMMED="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -n "$TRIMMED" ]; then
+              LOCKFILES+=("$TRIMMED")
+            fi
+          done < <(printf '%s\n' "$RAW_LOCKFILES" | tr ',' '\n')
+
+          if [ ${#LOCKFILES[@]} -eq 0 ]; then
+            echo "::error::No lockfiles specified for OSV scan."
+            exit 1
+          fi
+
+          OSV_BASE_ARGS=""
+          if [ -n "$CFG" ]; then
+            OSV_BASE_ARGS="--config=$CFG"
+          fi
+
+          # Scan each declared lockfile
+          for lf in "${LOCKFILES[@]}"; do
+            if [ ! -f "$lf" ]; then
+              echo "::error::Lockfile '$lf' does not exist."
+              exit 1
+            fi
+            echo "::group::Scanning lockfile: $lf"
+            if [ -n "$OSV_BASE_ARGS" ]; then
+              osv-scanner scan --lockfile="$lf" $OSV_BASE_ARGS
+            else
+              osv-scanner scan --lockfile="$lf"
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Record step result and SHA
+        id: step-result
+        if: always()
+        shell: bash
+        run: |
+          echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

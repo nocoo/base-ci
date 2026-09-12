@@ -1,0 +1,258 @@
+name: "Setup JS and Dependencies"
+description: "Resolve package manager, runtime version, freeze-install root and extra directories with supply-chain policy enforcement"
+
+inputs:
+  package-manager:
+    description: "Package manager: bun, npm, or pnpm (default: bun)"
+    required: false
+    default: "bun"
+  runtime-version:
+    description: "Runtime version for bun/pnpm/node (empty = read from version file / packageManager or fallback default)"
+    required: false
+    default: ""
+  node-version:
+    description: "Node.js version (empty = read from .nvmrc / .node-version or fallback default)"
+    required: false
+    default: ""
+  working-directory:
+    description: "Working directory relative to repository root"
+    required: false
+    default: "."
+  install-policy:
+    description: "Lifecycle script policy: blocked, trusted, or project"
+    required: false
+    default: "blocked"
+  extra-install-dirs:
+    description: "Newline or comma-separated list of extra directories needing install"
+    required: false
+    default: ""
+
+outputs:
+  effective-runtime-version:
+    description: "The actual resolved runtime version"
+    value: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
+  effective-node-version:
+    description: "The actual resolved Node.js version"
+    value: ${{ steps.resolve-runtime.outputs.effective-node-version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve runtime versions
+      id: resolve-runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        WORKDIR="${{ inputs.working-directory }}"
+        PKG_MGR="${{ inputs.package-manager }}"
+        REQ_RUNTIME="${{ inputs.runtime-version }}"
+        REQ_NODE="${{ inputs.node-version }}"
+
+        EFFECTIVE_RUNTIME="$REQ_RUNTIME"
+        EFFECTIVE_NODE="$REQ_NODE"
+
+        # 1. Resolve Node version if not explicitly passed
+        if [ -z "$EFFECTIVE_NODE" ]; then
+          if [ -f "$WORKDIR/.nvmrc" ]; then
+            EFFECTIVE_NODE="$(tr -d '[:space:]' < "$WORKDIR/.nvmrc" | sed 's/^v//')"
+          elif [ -f ".nvmrc" ]; then
+            EFFECTIVE_NODE="$(tr -d '[:space:]' < ".nvmrc" | sed 's/^v//')"
+          elif [ -f "$WORKDIR/.node-version" ]; then
+            EFFECTIVE_NODE="$(tr -d '[:space:]' < "$WORKDIR/.node-version" | sed 's/^v//')"
+          elif [ -f ".node-version" ]; then
+            EFFECTIVE_NODE="$(tr -d '[:space:]' < ".node-version" | sed 's/^v//')"
+          else
+            EFFECTIVE_NODE="26.8.1"
+          fi
+        fi
+
+        # 2. Resolve Package Manager runtime version if not explicitly passed
+        if [ -z "$EFFECTIVE_RUNTIME" ]; then
+          if [ "$PKG_MGR" = "bun" ]; then
+            if [ -f "$WORKDIR/.bun-version" ]; then
+              EFFECTIVE_RUNTIME="$(tr -d '[:space:]' < "$WORKDIR/.bun-version" | sed 's/^v//')"
+            elif [ -f ".bun-version" ]; then
+              EFFECTIVE_RUNTIME="$(tr -d '[:space:]' < ".bun-version" | sed 's/^v//')"
+            else
+              EFFECTIVE_RUNTIME="1.4.0"
+            fi
+          elif [ "$PKG_MGR" = "pnpm" ]; then
+            EFFECTIVE_RUNTIME="10.5.2"
+          elif [ "$PKG_MGR" = "npm" ]; then
+            EFFECTIVE_RUNTIME="$EFFECTIVE_NODE"
+          fi
+        fi
+
+        echo "effective-runtime-version=$EFFECTIVE_RUNTIME" >> "$GITHUB_OUTPUT"
+        echo "effective-node-version=$EFFECTIVE_NODE" >> "$GITHUB_OUTPUT"
+        echo "Resolved versions: package-manager=$PKG_MGR, runtime=$EFFECTIVE_RUNTIME, node=$EFFECTIVE_NODE"
+
+    - name: Setup Node
+      if: inputs.package-manager == 'npm' || inputs.package-manager == 'pnpm' || inputs.node-version != ''
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ steps.resolve-runtime.outputs.effective-node-version }}
+
+    - name: Setup Bun
+      if: inputs.package-manager == 'bun'
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
+
+    - name: Setup pnpm
+      if: inputs.package-manager == 'pnpm'
+      shell: bash
+      run: |
+        set -euo pipefail
+        corepack enable
+        corepack prepare pnpm@${{ steps.resolve-runtime.outputs.effective-runtime-version }} --activate
+
+    - name: Install dependencies across root and extra directories
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        POLICY="${{ inputs.install-policy }}"
+        PKG_MGR="${{ inputs.package-manager }}"
+        WORKDIR="${{ inputs.working-directory }}"
+        EXTRA_INPUT="${{ inputs.extra-install-dirs }}"
+
+        if [ "$POLICY" != "blocked" ] && [ "$POLICY" != "trusted" ] && [ "$POLICY" != "project" ]; then
+          echo "::error::Invalid install-policy '$POLICY'. Must be blocked, trusted, or project."
+          exit 1
+        fi
+
+        # Function to validate and normalize a directory relative to repo root
+        normalize_dir() {
+          local raw="$1"
+          # Trim leading/trailing whitespace
+          local trimmed="$(echo "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -z "$trimmed" ]; then
+            return 0
+          fi
+          # Check for repo path traversal escape
+          case "$trimmed" in
+            ..|../..|/*|../*|*/..|*/../*)
+              echo "::error::Directory path traversal forbidden: '$trimmed'"
+              exit 1
+              ;;
+          esac
+          # Normalize dot / ./
+          local norm="${trimmed#./}"
+          if [ -z "$norm" ] || [ "$norm" = "." ]; then
+            norm="."
+          fi
+          echo "$norm"
+        }
+
+        # Collect directories to install
+        DIRS=()
+        NORM_WORKDIR="$(normalize_dir "$WORKDIR")"
+        DIRS+=("$NORM_WORKDIR")
+
+        # Parse extra-install-dirs (supporting newline or comma separation)
+        if [ -n "$EXTRA_INPUT" ]; then
+          # Replace commas with newlines and loop over lines
+          while IFS= read -r line || [ -n "$line" ]; do
+            NORM_D="$(normalize_dir "$line")"
+            if [ -n "$NORM_D" ]; then
+              DIRS+=("$NORM_D")
+            fi
+          done < <(printf '%s\n' "$EXTRA_INPUT" | tr ',' '\n')
+        fi
+
+        # Deduplicate directories while preserving order
+        UNIQUE_DIRS=()
+        declare -A SEEN_DIRS
+        for d in "${DIRS[@]}"; do
+          if [ -z "${SEEN_DIRS[$d]:-}" ]; then
+            SEEN_DIRS[$d]=1
+            UNIQUE_DIRS+=("$d")
+          fi
+        done
+
+        # Verify each directory exists
+        for d in "${UNIQUE_DIRS[@]}"; do
+          if [ ! -d "$d" ]; then
+            echo "::error::Install directory '$d' does not exist."
+            exit 1
+          fi
+        done
+
+        # Validate trustedDependencies in trusted mode
+        if [ "$POLICY" = "trusted" ]; then
+          for d in "${UNIQUE_DIRS[@]}"; do
+            PKG_JSON="$d/package.json"
+            if [ -f "$PKG_JSON" ]; then
+              node -e '
+                const fs = require("fs");
+                const path = process.argv[1];
+                try {
+                  const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+                  if (pkg.trustedDependencies !== undefined) {
+                    if (!Array.isArray(pkg.trustedDependencies)) {
+                      console.error(`::error::package.json#trustedDependencies in ${path} must be an array`);
+                      process.exit(1);
+                    }
+                    for (const item of pkg.trustedDependencies) {
+                      if (typeof item !== "string" || item.trim() === "") {
+                        console.error(`::error::Invalid item in trustedDependencies in ${path}`);
+                        process.exit(1);
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.error(`::error::Failed to parse ${path}: ${e.message}`);
+                  process.exit(1);
+                }
+              ' "$PKG_JSON"
+            fi
+          done
+        fi
+
+        # Execute installation in each directory
+        for d in "${UNIQUE_DIRS[@]}"; do
+          echo "::group::Install dependencies in '$d' (manager=$PKG_MGR, policy=$POLICY)"
+          pushd "$d" > /dev/null
+
+          if [ "$PKG_MGR" = "bun" ]; then
+            if [ ! -f "bun.lock" ] && [ ! -f "bun.lockb" ]; then
+              echo "::error::Missing bun lockfile (bun.lock / bun.lockb) in '$d' for frozen install."
+              exit 1
+            fi
+            INSTALL_CMD=("bun" "install" "--frozen-lockfile")
+            if [ "$POLICY" = "blocked" ]; then
+              INSTALL_CMD+=("--ignore-scripts")
+            fi
+            echo "Running: ${INSTALL_CMD[*]}"
+            "${INSTALL_CMD[@]}"
+
+          elif [ "$PKG_MGR" = "npm" ]; then
+            if [ ! -f "package-lock.json" ] && [ ! -f "npm-shrinkwrap.json" ]; then
+              echo "::error::Missing package-lock.json in '$d' for frozen install (npm ci)."
+              exit 1
+            fi
+            INSTALL_CMD=("npm" "ci")
+            if [ "$POLICY" = "blocked" ]; then
+              INSTALL_CMD+=("--ignore-scripts")
+            fi
+            echo "Running: ${INSTALL_CMD[*]}"
+            "${INSTALL_CMD[@]}"
+
+          elif [ "$PKG_MGR" = "pnpm" ]; then
+            if [ ! -f "pnpm-lock.yaml" ]; then
+              echo "::error::Missing pnpm-lock.yaml in '$d' for frozen install."
+              exit 1
+            fi
+            INSTALL_CMD=("pnpm" "install" "--frozen-lockfile")
+            if [ "$POLICY" = "blocked" ]; then
+              INSTALL_CMD+=("--ignore-scripts")
+            fi
+            echo "Running: ${INSTALL_CMD[*]}"
+            "${INSTALL_CMD[@]}"
+          fi
+
+          popd > /dev/null
+          echo "::endgroup::"
+        done

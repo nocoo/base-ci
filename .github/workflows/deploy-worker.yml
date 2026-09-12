@@ -437,6 +437,25 @@ jobs:
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
           echo "Using $bin ($reported)"
 
+      - name: Recheck default-branch freshness
+        if: inputs.require-fresh-main && inputs.tag == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ steps.source.outputs.target-sha }}
+          BRANCH: ${{ inputs.expected-branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]+$ ]] || [[ "$BRANCH" == *..* ]]; then
+            echo "::error::expected-branch is invalid"
+            exit 1
+          fi
+          tip=$(gh api "repos/${REPO}/git/ref/heads/${BRANCH}" --jq .object.sha)
+          if [ "$tip" != "$EXPECTED_SHA" ]; then
+            echo "::error::Stale deploy: $EXPECTED_SHA is not the current $BRANCH tip $tip"
+            exit 1
+          fi
+
       - name: Require Cloudflare credentials
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

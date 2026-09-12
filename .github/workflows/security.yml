@@ -1,6 +1,7 @@
 # Reusable security scanner workflow.
 # Pins gitleaks 8.30.1 and osv-scanner 2.5.1 with verified SHA256 checksums.
 # Runs secret scanning and vulnerability checks across multiple lockfiles (root, worker, rust, etc.).
+# Supports an optional custom security-command for custom gates (e.g. geekhub gate:security).
 
 name: Security Scan
 
@@ -23,6 +24,10 @@ on:
         description: "Path to .gitleaks.toml (optional)"
         type: string
         default: ""
+      gitleaks-ignore-path:
+        description: "Path to .gitleaksignore file (optional)"
+        type: string
+        default: ""
       scan-secrets:
         description: "Run gitleaks secrets detection"
         type: boolean
@@ -31,6 +36,10 @@ on:
         description: "Run OSV dependency vulnerability scanner"
         type: boolean
         default: true
+      security-command:
+        description: "Custom security check command (e.g. 'bun run gate:security'). If provided, runs after scanners"
+        type: string
+        default: ""
 
     outputs:
       job-status:
@@ -82,14 +91,21 @@ jobs:
         if: inputs.scan-secrets
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_GITLEAKS_CONFIG: ${{ inputs.gitleaks-config }}
+          IN_GITLEAKS_IGNORE: ${{ inputs.gitleaks-ignore-path }}
         run: |
           set -euo pipefail
           GITLEAKS_ARGS="detect --no-git --no-banner --verbose --redact"
-          CFG="${{ inputs.gitleaks-config }}"
-          if [ -n "$CFG" ]; then
-            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=$CFG"
+          if [ -n "$IN_GITLEAKS_CONFIG" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=$IN_GITLEAKS_CONFIG"
           elif [ -f ".gitleaks.toml" ]; then
             GITLEAKS_ARGS="$GITLEAKS_ARGS --config=.gitleaks.toml"
+          fi
+          if [ -n "$IN_GITLEAKS_IGNORE" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --gitleaks-ignore-path=$IN_GITLEAKS_IGNORE"
+          elif [ -f ".gitleaksignore" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --gitleaks-ignore-path=.gitleaksignore"
           fi
           echo "Running gitleaks with args: $GITLEAKS_ARGS"
           gitleaks $GITLEAKS_ARGS
@@ -121,19 +137,19 @@ jobs:
         if: inputs.scan-dependencies
         shell: bash
         working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_LOCKFILES: ${{ inputs.lockfiles }}
+          IN_OSV_CONFIG: ${{ inputs.osv-config }}
         run: |
           set -euo pipefail
-          RAW_LOCKFILES="${{ inputs.lockfiles }}"
-          CFG="${{ inputs.osv-config }}"
 
-          # Parse lockfiles (split by comma or newline)
           LOCKFILES=()
           while IFS= read -r line || [ -n "$line" ]; do
             TRIMMED="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
             if [ -n "$TRIMMED" ]; then
               LOCKFILES+=("$TRIMMED")
             fi
-          done < <(printf '%s\n' "$RAW_LOCKFILES" | tr ',' '\n')
+          done < <(printf '%s\n' "$IN_LOCKFILES" | tr ',' '\n')
 
           if [ ${#LOCKFILES[@]} -eq 0 ]; then
             echo "::error::No lockfiles specified for OSV scan."
@@ -141,11 +157,10 @@ jobs:
           fi
 
           OSV_BASE_ARGS=""
-          if [ -n "$CFG" ]; then
-            OSV_BASE_ARGS="--config=$CFG"
+          if [ -n "$IN_OSV_CONFIG" ]; then
+            OSV_BASE_ARGS="--config=$IN_OSV_CONFIG"
           fi
 
-          # Scan each declared lockfile
           for lf in "${LOCKFILES[@]}"; do
             if [ ! -f "$lf" ]; then
               echo "::error::Lockfile '$lf' does not exist."
@@ -159,6 +174,16 @@ jobs:
             fi
             echo "::endgroup::"
           done
+
+      - name: Custom security command
+        if: inputs.security-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_SEC_CMD: ${{ inputs.security-command }}
+        run: |
+          echo "Running custom security command..."
+          bash -euo pipefail -c "$IN_SEC_CMD"
 
       - name: Record step result and SHA
         id: step-result

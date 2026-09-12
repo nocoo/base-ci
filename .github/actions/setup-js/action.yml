@@ -41,55 +41,105 @@ runs:
     - name: Resolve runtime versions
       id: resolve-runtime
       shell: bash
+      env:
+        IN_WORKDIR: ${{ inputs.working-directory }}
+        IN_PKG_MGR: ${{ inputs.package-manager }}
+        IN_RUNTIME_VERSION: ${{ inputs.runtime-version }}
+        IN_NODE_VERSION: ${{ inputs.node-version }}
       run: |
-        set -euo pipefail
+        python3 -c '
+        import os, sys, json, re
 
-        WORKDIR="${{ inputs.working-directory }}"
-        PKG_MGR="${{ inputs.package-manager }}"
-        REQ_RUNTIME="${{ inputs.runtime-version }}"
-        REQ_NODE="${{ inputs.node-version }}"
+        workdir = os.environ.get("IN_WORKDIR", ".")
+        pkg_mgr = os.environ.get("IN_PKG_MGR", "bun").strip().lower()
+        req_runtime = os.environ.get("IN_RUNTIME_VERSION", "").strip()
+        req_node = os.environ.get("IN_NODE_VERSION", "").strip()
 
-        EFFECTIVE_RUNTIME="$REQ_RUNTIME"
-        EFFECTIVE_NODE="$REQ_NODE"
+        def clean_version(v):
+            if not v:
+                return ""
+            v = v.strip().lstrip("v")
+            return v
 
-        # 1. Resolve Node version if not explicitly passed
-        if [ -z "$EFFECTIVE_NODE" ]; then
-          if [ -f "$WORKDIR/.nvmrc" ]; then
-            EFFECTIVE_NODE="$(tr -d '[:space:]' < "$WORKDIR/.nvmrc" | sed 's/^v//')"
-          elif [ -f ".nvmrc" ]; then
-            EFFECTIVE_NODE="$(tr -d '[:space:]' < ".nvmrc" | sed 's/^v//')"
-          elif [ -f "$WORKDIR/.node-version" ]; then
-            EFFECTIVE_NODE="$(tr -d '[:space:]' < "$WORKDIR/.node-version" | sed 's/^v//')"
-          elif [ -f ".node-version" ]; then
-            EFFECTIVE_NODE="$(tr -d '[:space:]' < ".node-version" | sed 's/^v//')"
-          else
-            EFFECTIVE_NODE="26.8.1"
-          fi
-        fi
+        def read_file(p):
+            try:
+                if os.path.isfile(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        return f.read().strip()
+            except Exception:
+                pass
+            return ""
 
-        # 2. Resolve Package Manager runtime version if not explicitly passed
-        if [ -z "$EFFECTIVE_RUNTIME" ]; then
-          if [ "$PKG_MGR" = "bun" ]; then
-            if [ -f "$WORKDIR/.bun-version" ]; then
-              EFFECTIVE_RUNTIME="$(tr -d '[:space:]' < "$WORKDIR/.bun-version" | sed 's/^v//')"
-            elif [ -f ".bun-version" ]; then
-              EFFECTIVE_RUNTIME="$(tr -d '[:space:]' < ".bun-version" | sed 's/^v//')"
-            else
-              EFFECTIVE_RUNTIME="1.4.0"
-            fi
-          elif [ "$PKG_MGR" = "pnpm" ]; then
-            EFFECTIVE_RUNTIME="10.5.2"
-          elif [ "$PKG_MGR" = "npm" ]; then
-            EFFECTIVE_RUNTIME="$EFFECTIVE_NODE"
-          fi
-        fi
+        # 1. Resolve packageManager field from package.json if present
+        pm_name = ""
+        pm_version = ""
+        for candidate_pkg in [os.path.join(workdir, "package.json"), "package.json"]:
+            raw_pkg = read_file(candidate_pkg)
+            if raw_pkg:
+                try:
+                    data = json.loads(raw_pkg)
+                    pm_field = data.get("packageManager", "")
+                    if pm_field and "@" in pm_field:
+                        pm_name, pm_version = pm_field.split("@", 1)
+                        pm_name = pm_name.strip()
+                        pm_version = clean_version(pm_version)
+                        break
+                except Exception:
+                    pass
 
-        echo "effective-runtime-version=$EFFECTIVE_RUNTIME" >> "$GITHUB_OUTPUT"
-        echo "effective-node-version=$EFFECTIVE_NODE" >> "$GITHUB_OUTPUT"
-        echo "Resolved versions: package-manager=$PKG_MGR, runtime=$EFFECTIVE_RUNTIME, node=$EFFECTIVE_NODE"
+        # 2. Resolve Node version
+        eff_node = clean_version(req_node)
+        if not eff_node:
+            for p in [os.path.join(workdir, ".nvmrc"), ".nvmrc", os.path.join(workdir, ".node-version"), ".node-version"]:
+                content = read_file(p)
+                if content:
+                    eff_node = clean_version(content.splitlines()[0])
+                    break
+        if not eff_node:
+            eff_node = "26.8.1"
+
+        # Check for banned latest/ranges when version is promised
+        if eff_node.lower() == "latest" or any(c in eff_node for c in [">", "<", "^", "~", "*"]):
+            sys.stderr.write(f"::error::Node version must be exact, got: {eff_node}\n")
+            sys.exit(1)
+
+        # 3. Resolve Package Manager runtime version
+        eff_runtime = clean_version(req_runtime)
+        if not eff_runtime:
+            if pkg_mgr == "bun":
+                if pm_name == "bun" and pm_version:
+                    eff_runtime = pm_version
+                else:
+                    for p in [os.path.join(workdir, ".bun-version"), ".bun-version"]:
+                        content = read_file(p)
+                        if content:
+                            eff_runtime = clean_version(content.splitlines()[0])
+                            break
+                    if not eff_runtime:
+                        eff_runtime = "1.4.0"
+            elif pkg_mgr == "pnpm":
+                if pm_name == "pnpm" and pm_version:
+                    eff_runtime = pm_version
+                else:
+                    eff_runtime = "10.5.2"
+            elif pkg_mgr == "npm":
+                if pm_name == "npm" and pm_version:
+                    eff_runtime = pm_version
+                else:
+                    eff_runtime = eff_node
+
+        if eff_runtime.lower() == "latest" or any(c in eff_runtime for c in [">", "<", "^", "~", "*"]):
+            sys.stderr.write(f"::error::{pkg_mgr} version must be exact, got: {eff_runtime}\n")
+            sys.exit(1)
+
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"effective-runtime-version={eff_runtime}\n")
+            f.write(f"effective-node-version={eff_node}\n")
+
+        print(f"Resolved versions: package-manager={pkg_mgr}, runtime={eff_runtime}, node={eff_node}")
+        '
 
     - name: Setup Node
-      if: inputs.package-manager == 'npm' || inputs.package-manager == 'pnpm' || inputs.node-version != ''
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ steps.resolve-runtime.outputs.effective-node-version }}
@@ -103,156 +153,124 @@ runs:
     - name: Setup pnpm
       if: inputs.package-manager == 'pnpm'
       shell: bash
+      env:
+        PNPM_VERSION: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
       run: |
         set -euo pipefail
-        corepack enable
-        corepack prepare pnpm@${{ steps.resolve-runtime.outputs.effective-runtime-version }} --activate
+        if command -v corepack >/dev/null 2>&1; then
+          corepack enable
+          corepack prepare "pnpm@$PNPM_VERSION" --activate
+        else
+          npm install -g "pnpm@$PNPM_VERSION"
+        fi
 
     - name: Install dependencies across root and extra directories
       shell: bash
+      env:
+        IN_POLICY: ${{ inputs.install-policy }}
+        IN_PKG_MGR: ${{ inputs.package-manager }}
+        IN_WORKDIR: ${{ inputs.working-directory }}
+        IN_EXTRA_DIRS: ${{ inputs.extra-install-dirs }}
       run: |
-        set -euo pipefail
+        python3 -c '
+        import os, sys, json, subprocess
 
-        POLICY="${{ inputs.install-policy }}"
-        PKG_MGR="${{ inputs.package-manager }}"
-        WORKDIR="${{ inputs.working-directory }}"
-        EXTRA_INPUT="${{ inputs.extra-install-dirs }}"
+        policy = os.environ.get("IN_POLICY", "blocked").strip()
+        pkg_mgr = os.environ.get("IN_PKG_MGR", "bun").strip()
+        workdir = os.environ.get("IN_WORKDIR", ".").strip()
+        extra_input = os.environ.get("IN_EXTRA_DIRS", "").strip()
 
-        if [ "$POLICY" != "blocked" ] && [ "$POLICY" != "trusted" ] && [ "$POLICY" != "project" ]; then
-          echo "::error::Invalid install-policy '$POLICY'. Must be blocked, trusted, or project."
-          exit 1
-        fi
+        if policy not in ("blocked", "trusted", "project"):
+            sys.stderr.write(f"::error::Invalid install-policy \"{policy}\". Must be blocked, trusted, or project.\n")
+            sys.exit(1)
 
-        # Function to validate and normalize a directory relative to repo root
-        normalize_dir() {
-          local raw="$1"
-          # Trim leading/trailing whitespace
-          local trimmed="$(echo "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          if [ -z "$trimmed" ]; then
-            return 0
-          fi
-          # Check for repo path traversal escape
-          case "$trimmed" in
-            ..|../..|/*|../*|*/..|*/../*)
-              echo "::error::Directory path traversal forbidden: '$trimmed'"
-              exit 1
-              ;;
-          esac
-          # Normalize dot / ./
-          local norm="${trimmed#./}"
-          if [ -z "$norm" ] || [ "$norm" = "." ]; then
-            norm="."
-          fi
-          echo "$norm"
-        }
+        def norm_dir(raw):
+            trimmed = raw.strip()
+            if not trimmed:
+                return ""
+            # Guard against path traversal escape
+            parts = trimmed.replace("\\", "/").split("/")
+            if ".." in parts or trimmed.startswith("/"):
+                sys.stderr.write(f"::error::Directory path traversal forbidden: \"{trimmed}\"\n")
+                sys.exit(1)
+            norm = os.path.normpath(trimmed)
+            if norm in ("", "."):
+                return "."
+            return norm
 
-        # Collect directories to install
-        DIRS=()
-        NORM_WORKDIR="$(normalize_dir "$WORKDIR")"
-        DIRS+=("$NORM_WORKDIR")
+        dirs = []
+        d0 = norm_dir(workdir)
+        if d0:
+            dirs.append(d0)
 
-        # Parse extra-install-dirs (supporting newline or comma separation)
-        if [ -n "$EXTRA_INPUT" ]; then
-          # Replace commas with newlines and loop over lines
-          while IFS= read -r line || [ -n "$line" ]; do
-            NORM_D="$(normalize_dir "$line")"
-            if [ -n "$NORM_D" ]; then
-              DIRS+=("$NORM_D")
-            fi
-          done < <(printf '%s\n' "$EXTRA_INPUT" | tr ',' '\n')
-        fi
+        if extra_input:
+            # support comma or newline separation
+            raw_lines = extra_input.replace(",", "\n").splitlines()
+            for line in raw_lines:
+                nd = norm_dir(line)
+                if nd:
+                    dirs.append(nd)
 
-        # Deduplicate directories while preserving order
-        UNIQUE_DIRS=()
-        declare -A SEEN_DIRS
-        for d in "${DIRS[@]}"; do
-          if [ -z "${SEEN_DIRS[$d]:-}" ]; then
-            SEEN_DIRS[$d]=1
-            UNIQUE_DIRS+=("$d")
-          fi
-        done
+        # Portable deduplication preserving order (supported on Python 3.7+)
+        unique_dirs = list(dict.fromkeys(dirs))
 
-        # Verify each directory exists
-        for d in "${UNIQUE_DIRS[@]}"; do
-          if [ ! -d "$d" ]; then
-            echo "::error::Install directory '$d' does not exist."
-            exit 1
-          fi
-        done
+        # Check directories exist
+        for d in unique_dirs:
+            if not os.path.isdir(d):
+                sys.stderr.write(f"::error::Install directory \"{d}\" does not exist.\n")
+                sys.exit(1)
 
-        # Validate trustedDependencies in trusted mode
-        if [ "$POLICY" = "trusted" ]; then
-          for d in "${UNIQUE_DIRS[@]}"; do
-            PKG_JSON="$d/package.json"
-            if [ -f "$PKG_JSON" ]; then
-              node -e '
-                const fs = require("fs");
-                const path = process.argv[1];
-                try {
-                  const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-                  if (pkg.trustedDependencies !== undefined) {
-                    if (!Array.isArray(pkg.trustedDependencies)) {
-                      console.error(`::error::package.json#trustedDependencies in ${path} must be an array`);
-                      process.exit(1);
-                    }
-                    for (const item of pkg.trustedDependencies) {
-                      if (typeof item !== "string" || item.trim() === "") {
-                        console.error(`::error::Invalid item in trustedDependencies in ${path}`);
-                        process.exit(1);
-                      }
-                    }
-                  }
-                } catch (e) {
-                  console.error(`::error::Failed to parse ${path}: ${e.message}`);
-                  process.exit(1);
-                }
-              ' "$PKG_JSON"
-            fi
-          done
-        fi
+        # Validate package.json#trustedDependencies in trusted mode
+        if policy == "trusted":
+            for d in unique_dirs:
+                pkg_path = os.path.join(d, "package.json")
+                if os.path.isfile(pkg_path):
+                    with open(pkg_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    trusted = data.get("trustedDependencies")
+                    if trusted is not None:
+                        if not isinstance(trusted, list):
+                            sys.stderr.write(f"::error::package.json#trustedDependencies in {pkg_path} must be a list\n")
+                            sys.exit(1)
+                        for item in trusted:
+                            if not isinstance(item, str) or not item.strip():
+                                sys.stderr.write(f"::error::Invalid item in trustedDependencies in {pkg_path}\n")
+                                sys.exit(1)
 
-        # Execute installation in each directory
-        for d in "${UNIQUE_DIRS[@]}"; do
-          echo "::group::Install dependencies in '$d' (manager=$PKG_MGR, policy=$POLICY)"
-          pushd "$d" > /dev/null
+        # Execute frozen installs per directory
+        for d in unique_dirs:
+            print(f"::group::Install dependencies in \"{d}\" (manager={pkg_mgr}, policy={policy})")
+            if pkg_mgr == "bun":
+                has_lock = os.path.isfile(os.path.join(d, "bun.lock")) or os.path.isfile(os.path.join(d, "bun.lockb"))
+                if not has_lock:
+                    sys.stderr.write(f"::error::Missing bun lockfile in \"{d}\" for frozen install.\n")
+                    sys.exit(1)
+                cmd = ["bun", "install", "--frozen-lockfile"]
+                if policy == "blocked":
+                    cmd.append("--ignore-scripts")
+            elif pkg_mgr == "npm":
+                has_lock = os.path.isfile(os.path.join(d, "package-lock.json")) or os.path.isfile(os.path.join(d, "npm-shrinkwrap.json"))
+                if not has_lock:
+                    sys.stderr.write(f"::error::Missing package-lock.json in \"{d}\" for frozen install (npm ci).\n")
+                    sys.exit(1)
+                cmd = ["npm", "ci"]
+                if policy == "blocked":
+                    cmd.append("--ignore-scripts")
+            elif pkg_mgr == "pnpm":
+                has_lock = os.path.isfile(os.path.join(d, "pnpm-lock.yaml"))
+                if not has_lock:
+                    sys.stderr.write(f"::error::Missing pnpm-lock.yaml in \"{d}\" for frozen install.\n")
+                    sys.exit(1)
+                cmd = ["pnpm", "install", "--frozen-lockfile"]
+                if policy == "blocked":
+                    cmd.append("--ignore-scripts")
+            else:
+                sys.stderr.write(f"::error::Unsupported package manager: {pkg_mgr}\n")
+                sys.exit(1)
 
-          if [ "$PKG_MGR" = "bun" ]; then
-            if [ ! -f "bun.lock" ] && [ ! -f "bun.lockb" ]; then
-              echo "::error::Missing bun lockfile (bun.lock / bun.lockb) in '$d' for frozen install."
-              exit 1
-            fi
-            INSTALL_CMD=("bun" "install" "--frozen-lockfile")
-            if [ "$POLICY" = "blocked" ]; then
-              INSTALL_CMD+=("--ignore-scripts")
-            fi
-            echo "Running: ${INSTALL_CMD[*]}"
-            "${INSTALL_CMD[@]}"
-
-          elif [ "$PKG_MGR" = "npm" ]; then
-            if [ ! -f "package-lock.json" ] && [ ! -f "npm-shrinkwrap.json" ]; then
-              echo "::error::Missing package-lock.json in '$d' for frozen install (npm ci)."
-              exit 1
-            fi
-            INSTALL_CMD=("npm" "ci")
-            if [ "$POLICY" = "blocked" ]; then
-              INSTALL_CMD+=("--ignore-scripts")
-            fi
-            echo "Running: ${INSTALL_CMD[*]}"
-            "${INSTALL_CMD[@]}"
-
-          elif [ "$PKG_MGR" = "pnpm" ]; then
-            if [ ! -f "pnpm-lock.yaml" ]; then
-              echo "::error::Missing pnpm-lock.yaml in '$d' for frozen install."
-              exit 1
-            fi
-            INSTALL_CMD=("pnpm" "install" "--frozen-lockfile")
-            if [ "$POLICY" = "blocked" ]; then
-              INSTALL_CMD+=("--ignore-scripts")
-            fi
-            echo "Running: ${INSTALL_CMD[*]}"
-            "${INSTALL_CMD[@]}"
-          fi
-
-          popd > /dev/null
-          echo "::endgroup::"
-        done
+            print(f"Running: {\" \".join(cmd)} in {d}")
+            res = subprocess.run(cmd, cwd=d)
+            if res.returncode != 0:
+                sys.exit(res.returncode)
+            print("::endgroup::")
+        '

@@ -303,7 +303,6 @@ jobs:
         run: bash -euo pipefail -c "$BUILD_COMMAND"
 
       - name: Locate locked Wrangler
-        if: inputs.deploy-script == '' || inputs.d1-migrations
         id: wrangler
         env:
           WRANGLER_VERSION: ${{ inputs.wrangler-version }}

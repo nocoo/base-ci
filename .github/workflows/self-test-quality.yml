@@ -7,6 +7,13 @@ on:
     branches: [main]
 
 jobs:
+  test-native-node:
+    uses: ./.github/workflows/test-job.yml
+    with:
+      runtime: none
+      node-version: '22.23.2'
+      command: node -e "require('node:assert/strict').equal(process.versions.node, '22.23.2')"
+
   # ─────────────────────────────────────────────────────
   # 1. Native runner test (Python / macOS & Linux matrix support)
   # ─────────────────────────────────────────────────────

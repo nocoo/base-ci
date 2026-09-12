@@ -133,11 +133,27 @@ jobs:
           install-policy: ${{ inputs.install-policy }}
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
+      - name: Setup Node without package installation
+        if: inputs.runtime == 'none' && inputs.node-version != ''
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
       - name: Configure test environment
         uses: nocoo/base-ci/.github/actions/configure-env@908d392767f22fc305256ac3fef653ee003173e0
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
+
+      - name: Pre-command
+        if: inputs.pre-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PRE_COMMAND: ${{ inputs.pre-command }}
+        run: |
+          echo "Executing pre-command..."
+          bash -euo pipefail -c "$IN_PRE_COMMAND"
 
       - name: Install Playwright browsers
         if: inputs.browser != ''
@@ -163,16 +179,6 @@ jobs:
             npx playwright install --with-deps "$IN_BROWSER"
           fi
           popd > /dev/null
-
-      - name: Pre-command
-        if: inputs.pre-command != ''
-        shell: bash
-        working-directory: ${{ inputs.working-directory }}
-        env:
-          IN_PRE_COMMAND: ${{ inputs.pre-command }}
-        run: |
-          echo "Executing pre-command..."
-          bash -euo pipefail -c "$IN_PRE_COMMAND"
 
       - name: Run test command
         id: run-test

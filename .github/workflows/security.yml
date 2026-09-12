@@ -1,0 +1,199 @@
+# Reusable security scanner workflow.
+# Pins gitleaks 8.30.1 and osv-scanner 2.5.1 with verified SHA256 checksums via setup-security-scanners.
+# Supports Bun installation when security-command or project context requires JS execution (e.g. geekhub gate:security).
+# Preserves ignore-gitleaks-allow, custom reports upload, and multi-lockfile OSV scanning.
+
+name: Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Working directory relative to repo root"
+        type: string
+        default: "."
+      package-manager:
+        description: "Package manager if security-command requires dependencies (bun, npm, pnpm, or none)"
+        type: string
+        default: "none"
+      runtime-version:
+        description: "Runtime version for bun/pnpm if package-manager != none"
+        type: string
+        default: ""
+      node-version:
+        description: "Node.js version if package-manager != none"
+        type: string
+        default: ""
+      install-policy:
+        description: "Install policy if package-manager != none"
+        type: string
+        default: "blocked"
+      extra-install-dirs:
+        description: "Extra install dirs if package-manager != none"
+        type: string
+        default: ""
+      lockfiles:
+        description: "Newline or comma-separated lockfile paths to scan with OSV (defaults to bun.lock)"
+        type: string
+        default: "bun.lock"
+      osv-config:
+        description: "Path to .osv-scanner.toml (optional)"
+        type: string
+        default: ""
+      gitleaks-config:
+        description: "Path to .gitleaks.toml (optional)"
+        type: string
+        default: ""
+      gitleaks-ignore-path:
+        description: "Path to .gitleaksignore file (optional)"
+        type: string
+        default: ""
+      scan-secrets:
+        description: "Run gitleaks secrets detection"
+        type: boolean
+        default: true
+      scan-dependencies:
+        description: "Run OSV dependency vulnerability scanner"
+        type: boolean
+        default: true
+      security-command:
+        description: "Custom security check command (e.g. 'bun run gate:security'). Runs with bash -euo pipefail -c"
+        type: string
+        default: ""
+      report-path:
+        description: "Path to security report directory or file to upload as artifact (optional)"
+        type: string
+        default: ""
+      report-artifact-name:
+        description: "Name for security report artifact"
+        type: string
+        default: "security-report"
+
+    outputs:
+      job-status:
+        description: "Security scan status"
+        value: ${{ jobs.security.outputs.job-status }}
+      tested-sha:
+        description: "Commit SHA tested by security scan"
+        value: ${{ jobs.security.outputs.tested-sha }}
+
+jobs:
+  security:
+    name: "Security (Secrets & Vulnerabilities)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      job-status: ${{ steps.step-result.outputs.status }}
+      tested-sha: ${{ steps.step-result.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies (if security-command requires runtime)
+        if: inputs.package-manager != 'none'
+        uses: nocoo/base-ci/.github/actions/setup-js@8f984a8824a79407fc8953dfa4533cd0e75b9988
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Install security scanners (gitleaks + osv-scanner)
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@86ff9032d75b2580f8ea6b0e10db3ca4ce054819
+
+      - name: Gitleaks detect
+        if: inputs.scan-secrets
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_GITLEAKS_CONFIG: ${{ inputs.gitleaks-config }}
+          IN_GITLEAKS_IGNORE: ${{ inputs.gitleaks-ignore-path }}
+        run: |
+          set -euo pipefail
+          GITLEAKS_ARGS="detect --no-git --no-banner --verbose --redact"
+          if [ -n "$IN_GITLEAKS_CONFIG" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=$IN_GITLEAKS_CONFIG"
+          elif [ -f ".gitleaks.toml" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=.gitleaks.toml"
+          fi
+          if [ -n "$IN_GITLEAKS_IGNORE" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --gitleaks-ignore-path=$IN_GITLEAKS_IGNORE"
+          elif [ -f ".gitleaksignore" ]; then
+            GITLEAKS_ARGS="$GITLEAKS_ARGS --gitleaks-ignore-path=.gitleaksignore"
+          fi
+          echo "Running gitleaks with args: $GITLEAKS_ARGS"
+          gitleaks $GITLEAKS_ARGS
+
+      - name: OSV dependency scan
+        if: inputs.scan-dependencies
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_LOCKFILES: ${{ inputs.lockfiles }}
+          IN_OSV_CONFIG: ${{ inputs.osv-config }}
+        run: |
+          set -euo pipefail
+
+          LOCKFILES=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            TRIMMED="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -n "$TRIMMED" ]; then
+              LOCKFILES+=("$TRIMMED")
+            fi
+          done < <(printf '%s\n' "$IN_LOCKFILES" | tr ',' '\n')
+
+          if [ ${#LOCKFILES[@]} -eq 0 ]; then
+            echo "::error::No lockfiles specified for OSV scan."
+            exit 1
+          fi
+
+          OSV_BASE_ARGS=""
+          if [ -n "$IN_OSV_CONFIG" ]; then
+            OSV_BASE_ARGS="--config=$IN_OSV_CONFIG"
+          fi
+
+          for lf in "${LOCKFILES[@]}"; do
+            if [ ! -f "$lf" ]; then
+              echo "::error::Lockfile '$lf' does not exist."
+              exit 1
+            fi
+            echo "::group::Scanning lockfile: $lf"
+            if [ -n "$OSV_BASE_ARGS" ]; then
+              osv-scanner scan --lockfile="$lf" $OSV_BASE_ARGS
+            else
+              osv-scanner scan --lockfile="$lf"
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Custom security command
+        if: inputs.security-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_SEC_CMD: ${{ inputs.security-command }}
+          CI: "true"
+        run: |
+          echo "Running custom security command..."
+          bash -euo pipefail -c "$IN_SEC_CMD"
+
+      - name: Record step result and SHA
+        id: step-result
+        if: always()
+        shell: bash
+        run: |
+          echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload security reports
+        if: inputs.report-path != '' && !cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.report-artifact-name }}
+          path: ${{ inputs.report-path }}
+          retention-days: 7
+          if-no-files-found: ignore

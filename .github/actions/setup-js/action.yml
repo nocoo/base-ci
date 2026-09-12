@@ -1,0 +1,85 @@
+name: "Setup JS and Dependencies"
+description: "Resolve package manager, runtime version, freeze-install root and extra directories with supply-chain policy enforcement"
+
+inputs:
+  package-manager:
+    description: "Package manager: bun, npm, or pnpm (default: bun)"
+    required: false
+    default: "bun"
+  runtime-version:
+    description: "Runtime version for bun/pnpm/node (empty = read from version file / packageManager or fallback default)"
+    required: false
+    default: ""
+  node-version:
+    description: "Node.js version (empty = read from .nvmrc / .node-version or fallback default)"
+    required: false
+    default: ""
+  working-directory:
+    description: "Working directory relative to repository root"
+    required: false
+    default: "."
+  install-policy:
+    description: "Lifecycle script policy: blocked, trusted, or project"
+    required: false
+    default: "blocked"
+  extra-install-dirs:
+    description: "Newline or comma-separated list of extra directories needing install"
+    required: false
+    default: ""
+
+outputs:
+  effective-runtime-version:
+    description: "The actual resolved runtime version"
+    value: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
+  effective-node-version:
+    description: "The actual resolved Node.js version"
+    value: ${{ steps.resolve-runtime.outputs.effective-node-version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve runtime versions
+      id: resolve-runtime
+      shell: bash
+      env:
+        IN_WORKDIR: ${{ inputs.working-directory }}
+        IN_PKG_MGR: ${{ inputs.package-manager }}
+        IN_RUNTIME_VERSION: ${{ inputs.runtime-version }}
+        IN_NODE_VERSION: ${{ inputs.node-version }}
+      run: |
+        python3 "${{ github.action_path }}/setup_js_core.py" resolve
+
+    - name: Setup Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ steps.resolve-runtime.outputs.effective-node-version }}
+
+    - name: Setup Bun
+      if: inputs.package-manager == 'bun'
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
+
+    - name: Setup pnpm
+      if: inputs.package-manager == 'pnpm'
+      shell: bash
+      env:
+        PNPM_VERSION: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
+      run: |
+        set -euo pipefail
+        if command -v corepack >/dev/null 2>&1; then
+          corepack enable
+          corepack prepare "pnpm@$PNPM_VERSION" --activate
+        else
+          npm install -g "pnpm@$PNPM_VERSION"
+        fi
+
+    - name: Install dependencies across root and extra directories
+      shell: bash
+      env:
+        IN_POLICY: ${{ inputs.install-policy }}
+        IN_PKG_MGR: ${{ inputs.package-manager }}
+        IN_WORKDIR: ${{ inputs.working-directory }}
+        IN_EXTRA_DIRS: ${{ inputs.extra-install-dirs }}
+      run: |
+        python3 "${{ github.action_path }}/setup_js_core.py" install

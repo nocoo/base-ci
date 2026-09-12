@@ -1,0 +1,18 @@
+{
+  "name": "quality-basic-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "typecheck": "echo 'typecheck' && [ \"$CI\" = 'true' ] && [ -n \"$TEST_MULTILINE\" ]",
+    "lint": "echo 'lint' | tr 'a-z' 'A-Z' > /dev/null",
+    "test:coverage": "mkdir -p coverage && echo 'TN:\nend_of_record' > coverage/lcov.info && [ -n \"$TEST_MULTILINE\" ] && echo 'coverage ok'",
+    "build": "cd sub && echo 'build ok' && cd ..",
+    "test:api": "test -f package.json && [ \"$CI\" = 'true' ] && [ -n \"$TEST_MULTILINE\" ]",
+    "test:e2e:pw": "echo 'playwright ok'",
+    "ci:package": "echo \"package check: ok\""
+  },
+  "trustedDependencies": [
+    "example-native-lib"
+  ]
+}

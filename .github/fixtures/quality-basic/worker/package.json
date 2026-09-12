@@ -1,0 +1,8 @@
+{
+  "name": "quality-basic-fixture-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "echo 'worker test ok'"
+  }
+}

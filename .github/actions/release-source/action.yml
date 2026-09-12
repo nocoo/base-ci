@@ -1,0 +1,72 @@
+name: Release source
+description: Fail-closed GitHub API proof of a commit SHA and CI run for production deploys
+
+inputs:
+  github-token:
+    description: Token with actions:read used to GET the selected CI run
+    required: true
+  expected-workflow-path:
+    description: Canonical CI workflow path (example .github/workflows/ci.yml)
+    required: true
+  expected-workflow-name:
+    description: Canonical CI workflow name (example CI or Tests)
+    required: true
+  expected-branch:
+    description: Branch or tag name that must equal the proven run head_branch (default main)
+    required: false
+    default: main
+  source-run-id:
+    description: Explicit Actions run ID to GET (workflow_run and manual run deploys)
+    required: false
+    default: ""
+  tag:
+    description: Tag name or refs/tags/... for tag and manual tag deploys
+    required: false
+    default: ""
+  source-sha:
+    description: Optional expected full SHA. If set it must match the proven SHA; it cannot replace proof
+    required: false
+    default: ""
+  allowed-source-events:
+    description: Comma or newline separated events allowed on the proven CI run (default push)
+    required: false
+    default: push
+  require-fresh-main:
+    description: "true to require a run-id continuous deploy SHA to equal the current expected-branch tip"
+    required: false
+    default: "true"
+  package-version-match:
+    description: "true to require a vX.Y.Z tag to match package.json version at the proven SHA"
+    required: false
+    default: "false"
+  package-json-path:
+    description: Repository-relative package.json path used when package-version-match is true
+    required: false
+    default: package.json
+
+outputs:
+  target-sha:
+    description: Proven 40-character commit SHA
+    value: ${{ steps.resolve.outputs.target-sha }}
+  source-run-id:
+    description: Proven Actions run ID
+    value: ${{ steps.resolve.outputs.source-run-id }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        RELEASE_EXPECTED_WORKFLOW_PATH: ${{ inputs.expected-workflow-path }}
+        RELEASE_EXPECTED_WORKFLOW_NAME: ${{ inputs.expected-workflow-name }}
+        RELEASE_EXPECTED_BRANCH: ${{ inputs.expected-branch }}
+        RELEASE_SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+        RELEASE_TAG: ${{ inputs.tag }}
+        RELEASE_SOURCE_SHA: ${{ inputs.source-sha }}
+        RELEASE_ALLOWED_SOURCE_EVENTS: ${{ inputs.allowed-source-events }}
+        RELEASE_REQUIRE_FRESH_MAIN: ${{ inputs.require-fresh-main }}
+        RELEASE_PACKAGE_VERSION_MATCH: ${{ inputs.package-version-match }}
+        RELEASE_PACKAGE_JSON_PATH: ${{ inputs.package-json-path }}
+      run: node "$GITHUB_ACTION_PATH/resolve.mjs"

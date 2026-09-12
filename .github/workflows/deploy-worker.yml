@@ -1,0 +1,481 @@
+# Reusable Workers release. Pin callers to a full commit SHA.
+# Internal composite: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
+# Do not change that pin to ./.github/actions/release-source (caller checkout is consumer source).
+
+name: Deploy Worker
+
+on:
+  workflow_call:
+    inputs:
+      expected-workflow-path:
+        description: Canonical CI workflow path proven by release-source
+        type: string
+        default: ".github/workflows/ci.yml"
+      expected-workflow-name:
+        description: Canonical CI workflow name proven by release-source
+        type: string
+        default: "CI"
+      expected-branch:
+        description: Branch or tag name that must equal the proven run head_branch
+        type: string
+        default: "main"
+      source-run-id:
+        description: Explicit Actions run ID (workflow_run and manual run deploys)
+        type: string
+        default: ""
+      tag:
+        description: Tag name or refs/tags/... for tag and manual tag deploys
+        type: string
+        default: ""
+      source-sha:
+        description: Optional expected SHA; must match proof and cannot replace it
+        type: string
+        default: ""
+      allowed-source-events:
+        description: Events allowed on the proven CI run
+        type: string
+        default: "push"
+      require-fresh-main:
+        description: Continuous run-id deploys must match the current expected-branch tip
+        type: boolean
+        default: true
+      package-version-match:
+        description: Require a vX.Y.Z tag to match package.json at the proven SHA
+        type: boolean
+        default: false
+      package-json-path:
+        description: package.json path used when package-version-match is true
+        type: string
+        default: "package.json"
+
+      package-manager:
+        description: bun, npm, or pnpm
+        type: string
+        default: "bun"
+      runtime-version:
+        description: Exact Bun or pnpm version; required for bun and pnpm (never latest)
+        type: string
+        default: ""
+      node-version:
+        description: Exact Node version; required for npm and pnpm
+        type: string
+        default: ""
+      working-directory:
+        description: Install and build directory relative to the repository root
+        type: string
+        default: "."
+      extra-install-dirs:
+        description: Newline or comma separated extra frozen-install directories
+        type: string
+        default: ""
+      install-policy:
+        description: "setup-js lifecycle policy: blocked, trusted, or project"
+        type: string
+        default: "blocked"
+
+      build-command:
+        description: Optional build command after install (empty skips)
+        type: string
+        default: ""
+      wrangler-version:
+        description: Exact locked Wrangler version that must match the local binary
+        type: string
+        required: true
+      wrangler-config:
+        description: Optional --config path relative to wrangler-working-directory
+        type: string
+        default: ""
+      wrangler-working-directory:
+        description: Directory for Wrangler commands; empty uses working-directory
+        type: string
+        default: ""
+      deploy-command:
+        description: Wrangler subcommand after the local binary (default deploy)
+        type: string
+        default: "deploy"
+      deploy-script:
+        description: Optional project deploy command (e.g. bun run deploy); skips Wrangler subcommand
+        type: string
+        default: ""
+      d1-migrations:
+        description: Apply remote D1 migrations before deploy
+        type: boolean
+        default: false
+      d1-databases:
+        description: Newline or comma separated D1 database names
+        type: string
+        default: ""
+      d1-command:
+        description: Optional full Wrangler D1 subcommand; overrides d1-databases looping
+        type: string
+        default: ""
+
+      environment:
+        description: GitHub environment on the deploy job (not a Wrangler env name)
+        type: string
+        default: "production"
+      concurrency-group:
+        description: Production lock group; empty uses deploy-worker-<repo>-<environment>
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Deploy job timeout
+        type: number
+        default: 20
+      verify-command:
+        description: Project production verify command (empty skips)
+        type: string
+        default: ""
+      verify-retries:
+        description: Bounded verify attempts (1-12)
+        type: number
+        default: 6
+      verify-retry-seconds:
+        description: Seconds between verify attempts
+        type: number
+        default: 5
+
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+
+    outputs:
+      target-sha:
+        description: Proven commit that was released
+        value: ${{ jobs.deploy.outputs.target-sha }}
+      source-run-id:
+        description: Proven Actions run ID
+        value: ${{ jobs.deploy.outputs.source-run-id }}
+
+jobs:
+  deploy:
+    name: Deploy Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+    concurrency:
+      group: ${{ inputs.concurrency-group != '' && inputs.concurrency-group || format('deploy-worker-{0}-{1}', github.repository, inputs.environment) }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      target-sha: ${{ steps.source.outputs.target-sha }}
+      source-run-id: ${{ steps.source.outputs.source-run-id }}
+    steps:
+      - name: Reject floating versions and unknown policies
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
+          RUNTIME_VERSION: ${{ inputs.runtime-version }}
+          NODE_VERSION: ${{ inputs.node-version }}
+          WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+          INSTALL_POLICY: ${{ inputs.install-policy }}
+          D1_MIGRATIONS: ${{ inputs.d1-migrations }}
+          D1_DATABASES: ${{ inputs.d1-databases }}
+          D1_COMMAND: ${{ inputs.d1-command }}
+        run: |
+          set -euo pipefail
+          exact='^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$'
+          case "$PACKAGE_MANAGER" in
+            bun|npm|pnpm) ;;
+            *) echo "::error::package-manager must be bun, npm, or pnpm"; exit 1 ;;
+          esac
+          case "$INSTALL_POLICY" in
+            blocked|trusted|project) ;;
+            *) echo "::error::install-policy must be blocked, trusted, or project"; exit 1 ;;
+          esac
+          if [[ ! "$WRANGLER_VERSION" =~ $exact ]]; then
+            echo "::error::wrangler-version must be an exact version, not latest"
+            exit 1
+          fi
+          if [ "$PACKAGE_MANAGER" = "bun" ] || [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+            if [[ ! "$RUNTIME_VERSION" =~ $exact ]]; then
+              echo "::error::runtime-version must be an exact $PACKAGE_MANAGER version, not latest"
+              exit 1
+            fi
+          fi
+          if [ "$PACKAGE_MANAGER" = "npm" ] || [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+            if [[ ! "$NODE_VERSION" =~ $exact ]]; then
+              echo "::error::node-version must be an exact Node version, not latest"
+              exit 1
+            fi
+          fi
+          if [ "$D1_MIGRATIONS" = "true" ] && [ -z "$D1_DATABASES" ] && [ -z "$D1_COMMAND" ]; then
+            echo "::error::d1-migrations requires d1-databases or d1-command"
+            exit 1
+          fi
+
+      - name: Resolve release source
+        id: source
+        uses: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
+        with:
+          github-token: ${{ github.token }}
+          expected-workflow-path: ${{ inputs.expected-workflow-path }}
+          expected-workflow-name: ${{ inputs.expected-workflow-name }}
+          expected-branch: ${{ inputs.expected-branch }}
+          source-run-id: ${{ inputs.source-run-id }}
+          tag: ${{ inputs.tag }}
+          source-sha: ${{ inputs.source-sha }}
+          allowed-source-events: ${{ inputs.allowed-source-events }}
+          require-fresh-main: ${{ inputs.require-fresh-main }}
+          package-version-match: ${{ inputs.package-version-match }}
+          package-json-path: ${{ inputs.package-json-path }}
+
+      - name: Checkout proven SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.target-sha }}
+          persist-credentials: false
+
+      - name: Confirm checkout matches proven SHA
+        env:
+          EXPECTED_SHA: ${{ steps.source.outputs.target-sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checked out $actual, expected $EXPECTED_SHA"
+            exit 1
+          fi
+
+      - name: Normalize repository-relative paths
+        id: paths
+        env:
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+          WRANGLER_WORKING_DIRECTORY: ${{ inputs.wrangler-working-directory }}
+          WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          EXTRA_INSTALL_DIRS: ${{ inputs.extra-install-dirs }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+
+          def rel(name, value, allow_empty=False, default="."):
+              raw = (value or "").strip()
+              if not raw:
+                  if allow_empty:
+                      return default
+                  print(f"::error::{name} is required", file=sys.stderr)
+                  sys.exit(1)
+              if raw in (".", "./"):
+                  return "."
+              parts = raw.replace("\\", "/").split("/")
+              if raw.startswith("/") or raw.startswith("~") or ".." in parts or ":" in raw:
+                  print(f"::error::{name} must be a relative path inside the repository", file=sys.stderr)
+                  sys.exit(1)
+              return "/".join(part for part in parts if part not in ("", "."))
+
+          workdir = rel("working-directory", os.environ.get("WORKING_DIRECTORY", "."))
+          wrangler_wd = rel("wrangler-working-directory", os.environ.get("WRANGLER_WORKING_DIRECTORY", ""), True, workdir)
+          config = (os.environ.get("WRANGLER_CONFIG") or "").strip()
+          if config:
+              rel("wrangler-config", config)
+          extras = []
+          for item in (os.environ.get("EXTRA_INSTALL_DIRS") or "").replace(",", "\n").splitlines():
+              item = item.strip()
+              if item:
+                  extras.append(rel("extra-install-dirs", item))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"working-directory={workdir}\n")
+              fh.write(f"wrangler-working-directory={wrangler_wd}\n")
+              fh.write("extra-install-dirs<<EOF\n")
+              fh.write("\n".join(extras) + ("\n" if extras else ""))
+              fh.write("EOF\n")
+          PY
+
+      - name: Setup JS and frozen install
+        uses: nocoo/base-ci/.github/actions/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ steps.paths.outputs.working-directory }}
+          extra-install-dirs: ${{ steps.paths.outputs.extra-install-dirs }}
+          install-policy: ${{ inputs.install-policy }}
+
+      - name: Build
+        if: inputs.build-command != ''
+        working-directory: ${{ steps.paths.outputs.working-directory }}
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -euo pipefail -c "$BUILD_COMMAND"
+
+      - name: Locate locked Wrangler
+        if: inputs.deploy-script == '' || inputs.d1-migrations
+        id: wrangler
+        env:
+          WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+          WRANGLER_WD: ${{ steps.paths.outputs.wrangler-working-directory }}
+          WORKDIR: ${{ steps.paths.outputs.working-directory }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, sys
+
+          def abs_bin(root):
+              return os.path.abspath(os.path.join(root, "node_modules", ".bin", "wrangler"))
+
+          workspace = os.environ["GITHUB_WORKSPACE"]
+          candidates = []
+          for raw in (os.environ.get("WRANGLER_WD", ""), os.environ.get("WORKDIR", ""), workspace):
+              raw = raw.strip() or "."
+              root = raw if os.path.isabs(raw) else os.path.abspath(os.path.join(workspace, raw))
+              candidates.append(abs_bin(root))
+          bin_path = next((path for path in candidates if os.path.isfile(path) and os.access(path, os.X_OK)), "")
+          if not bin_path:
+              print("::error::Locked local wrangler binary not found after frozen install", file=sys.stderr)
+              sys.exit(1)
+          import subprocess
+          reported = subprocess.check_output([bin_path, "--version"], text=True, stderr=subprocess.STDOUT).strip()
+          expected = os.environ["WRANGLER_VERSION"].lstrip("v")
+          match = re.search(r"(\d+\.\d+\.\d+(?:[.-][A-Za-z0-9.-]+)?)", reported)
+          parsed = match.group(1) if match else ""
+          if parsed != expected:
+              print(f"::error::Local wrangler '{reported}' parsed '{parsed}', expected {expected}", file=sys.stderr)
+              sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"bin={bin_path}\n")
+          print(f"Using {bin_path} ({parsed})")
+          PY
+
+      - name: Require Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is empty in the deployment environment"
+            missing=1
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is empty in the deployment environment"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Recheck default-branch freshness
+        if: inputs.require-fresh-main && inputs.tag == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ steps.source.outputs.target-sha }}
+          BRANCH: ${{ inputs.expected-branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]+$ ]] || [[ "$BRANCH" == *..* ]]; then
+            echo "::error::expected-branch is invalid"
+            exit 1
+          fi
+          tip=$(gh api "repos/${REPO}/git/ref/heads/${BRANCH}" --jq .object.sha)
+          if [ "$tip" != "$EXPECTED_SHA" ]; then
+            echo "::error::Stale deploy: $EXPECTED_SHA is not the current $BRANCH tip $tip"
+            exit 1
+          fi
+
+      - name: Apply D1 migrations
+        if: inputs.d1-migrations
+        working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_BIN: ${{ steps.wrangler.outputs.bin }}
+          WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          D1_COMMAND: ${{ inputs.d1-command }}
+          D1_DATABASES: ${{ inputs.d1-databases }}
+        run: |
+          set -euo pipefail
+          config=()
+          if [ -n "$WRANGLER_CONFIG" ]; then
+            config+=(--config "$WRANGLER_CONFIG")
+          fi
+          if [ -n "$D1_COMMAND" ]; then
+            "$WRANGLER_BIN" $D1_COMMAND "${config[@]}"
+            exit 0
+          fi
+          while IFS= read -r db || [ -n "${db:-}" ]; do
+            db=${db//$'\r'/}
+            [ -n "$db" ] || continue
+            if [[ ! "$db" =~ ^[A-Za-z0-9_-]+$ ]]; then
+              echo "::error::Invalid D1 database name"
+              exit 1
+            fi
+            "$WRANGLER_BIN" d1 migrations apply "$db" --remote "${config[@]}"
+          done < <(printf '%s\n' "$D1_DATABASES" | tr ',' '\n')
+
+      - name: Run project deploy script
+        if: inputs.deploy-script != ''
+        working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
+        run: bash -euo pipefail -c "$DEPLOY_SCRIPT"
+
+      - name: Deploy Worker
+        if: inputs.deploy-script == ''
+        working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_BIN: ${{ steps.wrangler.outputs.bin }}
+          WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          DEPLOY_COMMAND: ${{ inputs.deploy-command }}
+        run: |
+          set -euo pipefail
+          config=()
+          if [ -n "$WRANGLER_CONFIG" ]; then
+            config+=(--config "$WRANGLER_CONFIG")
+          fi
+          "$WRANGLER_BIN" $DEPLOY_COMMAND "${config[@]}"
+
+      - name: Verify deployment
+        if: inputs.verify-command != ''
+        working-directory: ${{ steps.paths.outputs.working-directory }}
+        env:
+          VERIFY_COMMAND: ${{ inputs.verify-command }}
+          VERIFY_RETRIES: ${{ inputs.verify-retries }}
+          VERIFY_RETRY_SECONDS: ${{ inputs.verify-retry-seconds }}
+        run: |
+          set -euo pipefail
+          retries=$VERIFY_RETRIES
+          delay=$VERIFY_RETRY_SECONDS
+          if ! [[ "$retries" =~ ^[0-9]+$ ]] || [ "$retries" -lt 1 ] || [ "$retries" -gt 12 ]; then
+            echo "::error::verify-retries must be between 1 and 12"
+            exit 1
+          fi
+          if ! [[ "$delay" =~ ^[0-9]+$ ]] || [ "$delay" -gt 60 ]; then
+            echo "::error::verify-retry-seconds must be between 0 and 60"
+            exit 1
+          fi
+          i=1
+          while [ "$i" -le "$retries" ]; do
+            echo "verify attempt $i/$retries"
+            if bash -euo pipefail -c "$VERIFY_COMMAND"; then
+              exit 0
+            fi
+            if [ "$i" -eq "$retries" ]; then
+              echo "::error::verify-command failed after $retries attempts"
+              exit 1
+            fi
+            sleep "$delay"
+            i=$((i + 1))
+          done
+
+      - name: Summary
+        if: always()
+        env:
+          TARGET_SHA: ${{ steps.source.outputs.target-sha }}
+          SOURCE_RUN: ${{ steps.source.outputs.source-run-id }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          {
+            echo "### Deploy Worker"
+            echo ""
+            echo "- Environment: \`$ENVIRONMENT\`"
+            echo "- Run: \`$SOURCE_RUN\`"
+            echo "- SHA: \`$TARGET_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"

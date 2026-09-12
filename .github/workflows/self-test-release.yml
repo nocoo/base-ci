@@ -1,0 +1,79 @@
+name: Self Test Release
+
+on:
+  push:
+    branches: [main, feat/shared-workers-20260912]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release-source and deploy-worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.12.0"
+
+      - name: Helper behavioral tests
+        run: node --test .github/actions/release-source/resolve.test.mjs
+
+      - name: Workflow contract tests
+        run: node --test .github/actions/release-source/workflow-contract.test.mjs
+
+      - name: Validate YAML and public interface
+        run: |
+          python3 -c "
+          import pathlib, sys, yaml
+
+          def load(path):
+              with open(path) as fh:
+                  return yaml.safe_load(fh)
+
+          action = load('.github/actions/release-source/action.yml')
+          for required in ('github-token', 'expected-workflow-path', 'expected-workflow-name'):
+              assert required in action['inputs'], required
+              assert action['inputs'][required].get('required') is True
+          assert 'same-run-proof' not in action['inputs']
+          assert 'caller-event-name' not in action['inputs']
+          for name in ('target-sha', 'source-run-id'):
+              assert name in action['outputs'], name
+
+          wf = load('.github/workflows/deploy-worker.yml')
+          on = wf.get(True) or wf.get('on')
+          assert 'workflow_call' in on
+          secrets = on['workflow_call']['secrets']
+          assert secrets['CLOUDFLARE_API_TOKEN']['required'] is False
+          assert secrets['CLOUDFLARE_ACCOUNT_ID']['required'] is False
+          inputs = on['workflow_call']['inputs']
+          assert inputs['wrangler-version']['required'] is True
+          assert inputs['require-fresh-main']['default'] is True
+          assert inputs['install-policy']['default'] == 'blocked'
+          assert 'deploy-script' in inputs
+          assert 'artifact-mode' not in inputs
+          assert 'same-run-proof' not in inputs
+          assert 'caller-event-name' not in inputs
+          job = wf['jobs']['deploy']
+          assert job['concurrency']['cancel-in-progress'] is False
+          env_name = job['environment']['name']
+          assert 'inputs.environment' in env_name
+          uses = [step.get('uses', '') for step in job['steps'] if isinstance(step, dict)]
+          assert any(item.startswith('nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba') for item in uses)
+          assert any(item.startswith('nocoo/base-ci/.github/actions/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4') for item in uses)
+          assert not any(item.startswith('./.github/actions/release-source') for item in uses)
+          text = pathlib.Path('.github/workflows/deploy-worker.yml').read_text()
+          assert 'wrangler-action' not in text
+          assert 'download-artifact' not in text
+          assert 'bash -lc' not in text
+          assert 'Recheck default-branch freshness' in text
+          assert text.index('Recheck default-branch freshness') < text.index('Apply D1 migrations')
+          print('release-source and deploy-worker contracts are valid')
+          "

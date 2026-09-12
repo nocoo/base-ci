@@ -1,0 +1,50 @@
+name: "Setup Security Scanners"
+description: "Install gitleaks 8.30.1 and osv-scanner 2.5.1 with verified sha256 checksums"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install gitleaks (pinned v8.30.1 with checksum verification)
+      shell: bash
+      run: |
+        set -euo pipefail
+        GITLEAKS_VERSION="8.30.1"
+        GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        TAR_FILE="/tmp/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+
+        curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
+          -o "$TAR_FILE" \
+          "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+
+        ACTUAL_SHA256="$(sha256sum "$TAR_FILE" | awk '{print $1}')"
+        if [ "$ACTUAL_SHA256" != "$GITLEAKS_SHA256" ]; then
+          echo "::error::Gitleaks checksum mismatch! Expected: $GITLEAKS_SHA256, got: $ACTUAL_SHA256"
+          exit 1
+        fi
+
+        tar -xzf "$TAR_FILE" -C /usr/local/bin gitleaks
+        chmod +x /usr/local/bin/gitleaks
+        rm -f "$TAR_FILE"
+        gitleaks version
+
+    - name: Install osv-scanner (pinned v2.5.1 with checksum verification)
+      shell: bash
+      run: |
+        set -euo pipefail
+        OSV_VERSION="2.5.1"
+        OSV_SHA256="f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
+        BIN_FILE="/tmp/osv-scanner_linux_amd64"
+
+        curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
+          -o "$BIN_FILE" \
+          "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+
+        ACTUAL_SHA256="$(sha256sum "$BIN_FILE" | awk '{print $1}')"
+        if [ "$ACTUAL_SHA256" != "$OSV_SHA256" ]; then
+          echo "::error::OSV-scanner checksum mismatch! Expected: $OSV_SHA256, got: $ACTUAL_SHA256"
+          exit 1
+        fi
+
+        mv "$BIN_FILE" /usr/local/bin/osv-scanner
+        chmod +x /usr/local/bin/osv-scanner
+        osv-scanner --version

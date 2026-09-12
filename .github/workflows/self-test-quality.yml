@@ -11,10 +11,14 @@ jobs:
   # 1. Native runner test (Python / macOS & Linux matrix support)
   # ─────────────────────────────────────────────────────
   test-native-python:
-    name: "Native Test Job (Python on ubuntu-latest)"
+    name: Native Python / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest]
     uses: ./.github/workflows/test-job.yml
     with:
-      runner: ubuntu-latest
+      runner: ${{ matrix.runner }}
       runtime: none
       python-version: "3.11"
       pre-command: 'echo "PRE_FLAG=1" >> "$GITHUB_ENV"'
@@ -29,6 +33,36 @@ jobs:
         print('Native python verified CI=true, pre-command env, and multiline env')
         "
       env-json: '{"TEST_MODE": "offline", "APP_ENV": "local", "TEST_MULTILINE": "line1\nline2\nline3"}'
+
+  test-package-managers:
+    name: ${{ matrix.runtime }} ${{ matrix.version }} / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: npm
+            version: '11.19.1'
+            directory: .github/fixtures/npm-basic
+            runner: ubuntu-latest
+          - runtime: pnpm
+            version: '10.34.5'
+            directory: .github/fixtures/pnpm-basic
+            runner: ubuntu-latest
+          - runtime: bun
+            version: '1.2.15'
+            directory: .github/fixtures/quality-basic
+            runner: ubuntu-latest
+          - runtime: bun
+            version: '1.4.2'
+            directory: .github/fixtures/quality-basic
+            runner: macos-latest
+    uses: ./.github/workflows/test-job.yml
+    with:
+      runner: ${{ matrix.runner }}
+      runtime: ${{ matrix.runtime }}
+      runtime-version: ${{ matrix.version }}
+      working-directory: ${{ matrix.directory }}
+      command: node -e "require('node:assert/strict').equal(require('fixture-module')(' value '), 'value')"
 
   # ─────────────────────────────────────────────────────
   # 2. Quality workflow invocation on fixture (with cd, &&, pipes, quotes, multiline env)
@@ -50,7 +84,7 @@ jobs:
       test-command: "mkdir -p coverage && echo 'TN:\nend_of_record' > coverage/lcov.info && [ -n \"$TEST_MULTILINE\" ] && echo 'coverage ok'"
       coverage-path: ".github/fixtures/quality-basic/coverage"
       build: true
-      build-command: "cd sub && echo 'build ok' && [ \"$CI\" = 'true' ] && cd .."
+      build-command: "cd sub && test -s input.txt && [ \"$CI\" = 'true' ] && cd .."
       l2: true
       l2-command: "test -f package.json && [ \"$CI\" = 'true' ] && [ -n \"$TEST_MULTILINE\" ]"
       worker: true
@@ -67,10 +101,10 @@ jobs:
     name: "Security Scan on basic fixture"
     uses: ./.github/workflows/security.yml
     with:
-      working-directory: .github/fixtures/quality-basic
-      lockfiles: ".github/fixtures/quality-basic/bun.lock"
+      working-directory: .github/fixtures/security-basic
+      lockfiles: "bun.lock,package-lock.json"
       scan-secrets: true
-      scan-dependencies: false
+      scan-dependencies: true
       security-command: "echo 'custom security command ok' && true"
 
   # ─────────────────────────────────────────────────────
@@ -85,7 +119,7 @@ jobs:
         run: |
           SHA="${{ needs.test-quality-basic.outputs.tested-sha }}"
           echo "Verified tested-sha: $SHA"
-          if [ -z "$SHA" ]; then
-            echo "::error::tested-sha output was empty!"
+          if [ "$SHA" != "${{ github.sha }}" ]; then
+            echo "::error::tested-sha must match the workflow commit!"
             exit 1
           fi

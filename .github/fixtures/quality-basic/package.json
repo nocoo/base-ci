@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "packageManager": "bun@1.4.0",
+  "dependencies": {
+    "fixture-module": "file:./module"
+  },
   "scripts": {
     "typecheck": "echo 'typecheck' && [ \"$CI\" = 'true' ] && [ -n \"$TEST_MULTILINE\" ]",
     "lint": "echo 'lint' | tr 'a-z' 'A-Z' > /dev/null",
@@ -13,6 +16,5 @@
     "ci:package": "echo \"package check: ok\""
   },
   "trustedDependencies": [
-    "example-native-lib"
   ]
 }

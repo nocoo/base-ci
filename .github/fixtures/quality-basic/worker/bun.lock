@@ -1,1 +1,14 @@
-# worker bun.lock fixture
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "quality-basic-fixture-worker",
+      "dependencies": {
+        "fixture-module": "file:../module",
+      },
+    },
+  },
+  "packages": {
+    "fixture-module": ["fixture-module@file:../module", {}],
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "security-basic-fixture",
+      "dependencies": {
+        "is-number": "7.0.0",
+      },
+    },
+  },
+  "packages": {
+    "is-number": ["is-number@7.0.0", "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz", {}, "sha1-dTU0W4lnNNX4DE0GxQlVUnoU8Ss="],
+  }
+}

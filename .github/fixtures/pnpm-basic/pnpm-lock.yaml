@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      fixture-module:
+        specifier: file:../quality-basic/module
+        version: file:../quality-basic/module
+
+packages:
+
+  fixture-module@file:../quality-basic/module:
+    resolution: {directory: ../quality-basic/module, type: directory}
+
+snapshots:
+
+  fixture-module@file:../quality-basic/module: {}

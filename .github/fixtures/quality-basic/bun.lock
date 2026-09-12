@@ -1,1 +1,14 @@
-# bun.lock fixture
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "quality-basic-fixture",
+      "dependencies": {
+        "fixture-module": "file:./module",
+      },
+    },
+  },
+  "packages": {
+    "fixture-module": ["fixture-module@file:module", {}],
+  }
+}

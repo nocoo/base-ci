@@ -1,0 +1,7 @@
+{
+  "name": "pnpm-basic-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.5.2",
+  "dependencies": {"fixture-module": "file:../quality-basic/module"}
+}

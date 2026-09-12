@@ -27,6 +27,10 @@ jobs:
           "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
       - name: Test release manifests
         run: node --test .github/actions/docker-manifest/index.test.mjs
+      - name: Test runtime and environment helpers
+        run: |
+          python3 -m unittest discover -s .github/actions/setup-js -p 'test_*.py'
+          python3 -m unittest discover -s .github/actions/configure-env -p 'test_*.py'
       - name: Validate YAML
         run: |
           python3 -c "

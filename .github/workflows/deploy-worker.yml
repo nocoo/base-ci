@@ -1,5 +1,5 @@
 # Reusable Workers release. Pin callers to a full commit SHA.
-# Internal composite: nocoo/base-ci/.github/actions/release-source@0678bb2627b9c4fe3596580cc17eca18258deca0
+# Internal composite: nocoo/base-ci/.github/actions/release-source@29d2d74495ee53ea6e0ceae0f290b624bbe2026a
 # Do not change that pin to ./.github/actions/release-source (caller checkout is consumer source).
 
 name: Deploy Worker
@@ -7,36 +7,40 @@ name: Deploy Worker
 on:
   workflow_call:
     inputs:
-      workflow-path:
+      expected-workflow-path:
         description: Canonical CI workflow path proven by release-source
         type: string
         default: ".github/workflows/ci.yml"
-      workflow-name:
+      expected-workflow-name:
         description: Canonical CI workflow name proven by release-source
         type: string
         default: "CI"
-      branch:
-        description: Default branch for main CI and freshness; tag CI head_branch may differ
+      expected-branch:
+        description: Branch or tag name that must equal the proven run head_branch
         type: string
         default: "main"
-      source-ref:
-        description: Full SHA or tag that must match the proven CI run
+      source-run-id:
+        description: Explicit Actions run ID (workflow_run and manual run deploys)
         type: string
-        required: true
-      ci-run-id:
-        description: Explicit Actions run ID to GET (workflow_run, manual, or tag CI)
+        default: ""
+      tag:
+        description: Tag name or refs/tags/... for tag and manual tag deploys
         type: string
-        required: true
+        default: ""
+      source-sha:
+        description: Optional expected SHA; must match proof and cannot replace it
+        type: string
+        default: ""
       allowed-source-events:
         description: Events allowed on the proven CI run
         type: string
         default: "push"
       require-fresh-main:
-        description: Default-branch CI must match the current branch tip; skipped for tag source-ref
+        description: Continuous run-id deploys must match the current expected-branch tip
         type: boolean
         default: true
       package-version-match:
-        description: Require a vX.Y.Z source-ref to match package.json at the proven SHA
+        description: Require a vX.Y.Z tag to match package.json at the proven SHA
         type: boolean
         default: false
       package-json-path:
@@ -151,12 +155,12 @@ on:
         required: false
 
     outputs:
-      sha:
+      target-sha:
         description: Proven commit that was released
-        value: ${{ jobs.deploy.outputs.sha }}
-      run-id:
+        value: ${{ jobs.deploy.outputs.target-sha }}
+      source-run-id:
         description: Proven Actions run ID
-        value: ${{ jobs.deploy.outputs.run-id }}
+        value: ${{ jobs.deploy.outputs.source-run-id }}
 
 jobs:
   deploy:
@@ -172,8 +176,8 @@ jobs:
       contents: read
       actions: read
     outputs:
-      sha: ${{ steps.source.outputs.sha }}
-      run-id: ${{ steps.source.outputs.run-id }}
+      target-sha: ${{ steps.source.outputs.target-sha }}
+      source-run-id: ${{ steps.source.outputs.source-run-id }}
     steps:
       - name: Reject floating versions and unknown modes
         env:
@@ -225,14 +229,15 @@ jobs:
 
       - name: Resolve release source
         id: source
-        uses: nocoo/base-ci/.github/actions/release-source@0678bb2627b9c4fe3596580cc17eca18258deca0
+        uses: nocoo/base-ci/.github/actions/release-source@29d2d74495ee53ea6e0ceae0f290b624bbe2026a
         with:
           github-token: ${{ github.token }}
-          workflow-path: ${{ inputs.workflow-path }}
-          workflow-name: ${{ inputs.workflow-name }}
-          branch: ${{ inputs.branch }}
-          source-ref: ${{ inputs.source-ref }}
-          ci-run-id: ${{ inputs.ci-run-id }}
+          expected-workflow-path: ${{ inputs.expected-workflow-path }}
+          expected-workflow-name: ${{ inputs.expected-workflow-name }}
+          expected-branch: ${{ inputs.expected-branch }}
+          source-run-id: ${{ inputs.source-run-id }}
+          tag: ${{ inputs.tag }}
+          source-sha: ${{ inputs.source-sha }}
           allowed-source-events: ${{ inputs.allowed-source-events }}
           require-fresh-main: ${{ inputs.require-fresh-main }}
           package-version-match: ${{ inputs.package-version-match }}
@@ -241,12 +246,12 @@ jobs:
       - name: Checkout proven SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.source.outputs.sha }}
+          ref: ${{ steps.source.outputs.target-sha }}
           persist-credentials: false
 
       - name: Confirm checkout matches proven SHA
         env:
-          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+          EXPECTED_SHA: ${{ steps.source.outputs.target-sha }}
         run: |
           set -euo pipefail
           actual=$(git rev-parse HEAD)
@@ -374,7 +379,7 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
           path: ${{ steps.paths.outputs.artifact-path }}
-          run-id: ${{ steps.source.outputs.run-id }}
+          run-id: ${{ steps.source.outputs.source-run-id }}
           github-token: ${{ github.token }}
 
       - name: Download proven artifact by id
@@ -383,7 +388,7 @@ jobs:
         with:
           artifact-ids: ${{ inputs.artifact-id }}
           path: ${{ steps.paths.outputs.artifact-path }}
-          run-id: ${{ steps.source.outputs.run-id }}
+          run-id: ${{ steps.source.outputs.source-run-id }}
           github-token: ${{ github.token }}
 
       - name: Build
@@ -423,25 +428,22 @@ jobs:
           echo "Using $bin ($reported)"
 
       - name: Recheck default-branch freshness
-        if: inputs.require-fresh-main
+        if: inputs.require-fresh-main && inputs.tag == ''
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
-          SOURCE_REF: ${{ inputs.source-ref }}
-          BRANCH: ${{ inputs.branch }}
+          EXPECTED_SHA: ${{ steps.source.outputs.target-sha }}
+          BRANCH: ${{ inputs.expected-branch }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [[ "$SOURCE_REF" =~ ^[a-fA-F0-9]{40}$ ]]; then
-            if [[ ! "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]+$ ]] || [[ "$BRANCH" == *..* ]]; then
-              echo "::error::branch is invalid"
-              exit 1
-            fi
-            tip=$(gh api "repos/${REPO}/git/ref/heads/${BRANCH}" --jq .object.sha)
-            if [ "$tip" != "$EXPECTED_SHA" ]; then
-              echo "::error::Stale deploy: $EXPECTED_SHA is not the current $BRANCH tip $tip"
-              exit 1
-            fi
+          if [[ ! "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]+$ ]] || [[ "$BRANCH" == *..* ]]; then
+            echo "::error::expected-branch is invalid"
+            exit 1
+          fi
+          tip=$(gh api "repos/${REPO}/git/ref/heads/${BRANCH}" --jq .object.sha)
+          if [ "$tip" != "$EXPECTED_SHA" ]; then
+            echo "::error::Stale deploy: $EXPECTED_SHA is not the current $BRANCH tip $tip"
+            exit 1
           fi
 
       - name: Require Cloudflare credentials
@@ -544,8 +546,8 @@ jobs:
       - name: Summary
         if: always()
         env:
-          TARGET_SHA: ${{ steps.source.outputs.sha }}
-          SOURCE_RUN: ${{ steps.source.outputs.run-id }}
+          TARGET_SHA: ${{ steps.source.outputs.target-sha }}
+          SOURCE_RUN: ${{ steps.source.outputs.source-run-id }}
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           {

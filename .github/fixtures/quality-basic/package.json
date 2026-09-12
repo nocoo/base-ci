@@ -1,0 +1,18 @@
+{
+  "name": "quality-basic-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "typecheck": "echo 'typecheck' && true",
+    "lint": "echo 'lint' | tr 'a-z' 'A-Z' > /dev/null",
+    "test:coverage": "mkdir -p coverage && echo 'TN:\nend_of_record' > coverage/lcov.info && echo 'coverage ok'",
+    "build": "cd sub && echo 'build ok' && cd ..",
+    "test:api": "echo 'testing api' && test -d coverage",
+    "test:e2e:pw": "echo 'playwright ok'",
+    "ci:package": "echo \"package check: ok\""
+  },
+  "trustedDependencies": [
+    "example-native-lib"
+  ]
+}

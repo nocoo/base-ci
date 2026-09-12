@@ -1,0 +1,80 @@
+name: Self Test Quality
+
+on:
+  push:
+    branches: [feat/shared-quality-20260912]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────────────
+  # 1. Native runner test (Python / macOS & Linux matrix support)
+  # ─────────────────────────────────────────────────────
+  test-native-python:
+    name: "Native Test Job (Python on ubuntu-latest)"
+    uses: ./.github/workflows/test-job.yml
+    with:
+      runner: ubuntu-latest
+      runtime: none
+      python-version: "3.11"
+      command: python3 -c "import sys; print('Native python execution ok on ' + sys.version)"
+      env-json: '{"TEST_MODE": "offline", "APP_ENV": "local"}'
+
+  # ─────────────────────────────────────────────────────
+  # 2. Quality workflow invocation on fixture (with cd, &&, pipes, quotes)
+  # ─────────────────────────────────────────────────────
+  test-quality-basic:
+    name: "Quality Gate (bun on quality-basic fixture)"
+    uses: ./.github/workflows/quality.yml
+    with:
+      package-manager: bun
+      working-directory: .github/fixtures/quality-basic
+      install-policy: project
+      typecheck: true
+      lint: true
+      unit: true
+      security: false
+      disabled-check-reasons: '{"security": "skip in local fixture test"}'
+      typecheck-command: "echo 'typecheck' && true"
+      lint-command: "echo 'lint' | tr 'a-z' 'A-Z' > /dev/null"
+      test-command: "mkdir -p coverage && echo 'TN:\nend_of_record' > coverage/lcov.info && echo 'coverage ok'"
+      coverage-path: ".github/fixtures/quality-basic/coverage"
+      build: true
+      build-command: "cd sub && echo 'build ok' && cd .."
+      l2: true
+      l2-command: "echo 'testing api' && test -d coverage"
+      worker: true
+      worker-directory: ".github/fixtures/quality-basic/worker"
+      worker-command: "echo 'worker test' && true"
+      package-check: true
+      package-command: "echo \"package check: ok\""
+
+  # ─────────────────────────────────────────────────────
+  # 3. Security workflow invocation
+  # ─────────────────────────────────────────────────────
+  test-security-scan:
+    name: "Security Scan on basic fixture"
+    uses: ./.github/workflows/security.yml
+    with:
+      working-directory: .github/fixtures/quality-basic
+      lockfiles: ".github/fixtures/quality-basic/bun.lock"
+      scan-secrets: true
+      scan-dependencies: false
+      security-command: "echo 'custom security command ok' && true"
+
+  # ─────────────────────────────────────────────────────
+  # 4. Verify outputs of the quality run
+  # ─────────────────────────────────────────────────────
+  verify-quality-output:
+    name: "Verify Quality Gate Output"
+    needs: [test-quality-basic, test-native-python]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check tested-sha
+        run: |
+          SHA="${{ needs.test-quality-basic.outputs.tested-sha }}"
+          echo "Verified tested-sha: $SHA"
+          if [ -z "$SHA" ]; then
+            echo "::error::tested-sha output was empty!"
+            exit 1
+          fi

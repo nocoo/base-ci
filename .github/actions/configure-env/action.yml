@@ -1,0 +1,17 @@
+name: Configure test environment
+description: Validate explicit test variables and mask individual secret values
+inputs:
+  env-json:
+    description: JSON object of non-sensitive string values
+    default: '{}'
+  secret-env-json:
+    description: JSON object containing only the test's required secrets
+    default: '{}'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BASE_CI_ENV_JSON: ${{ inputs.env-json }}
+        BASE_CI_SECRET_ENV_JSON: ${{ inputs.secret-env-json }}
+      run: python3 "$GITHUB_ACTION_PATH/configure.py"

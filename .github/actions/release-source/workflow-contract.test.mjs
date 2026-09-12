@@ -24,6 +24,7 @@ test('deploy-worker public secrets, lock and environment stay on the called job'
   assert.doesNotMatch(workflow, /secrets: inherit/);
   assert.doesNotMatch(workflow, /wrangler-action/);
   assert.doesNotMatch(workflow, /cancel-in-progress: true/);
+  assert.doesNotMatch(workflow, /same-run-proof/);
 });
 
 test('deploy-worker pins verified Actions SHAs and requires an exact Wrangler version', () => {

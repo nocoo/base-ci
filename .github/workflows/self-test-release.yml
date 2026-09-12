@@ -39,10 +39,11 @@ jobs:
                   return yaml.safe_load(fh)
 
           action = load('.github/actions/release-source/action.yml')
-          for required in ('github-token', 'expected-workflow-path', 'expected-workflow-name'):
+          for required in ('github-token', 'workflow-path', 'workflow-name', 'source-ref', 'ci-run-id'):
               assert required in action['inputs'], required
               assert action['inputs'][required].get('required') is True
-          for name in ('target-sha', 'source-run-id', 'event-type'):
+          assert 'same-run-proof' not in action['inputs']
+          for name in ('sha', 'run-id'):
               assert name in action['outputs'], name
 
           wf = load('.github/workflows/deploy-worker.yml')
@@ -53,13 +54,15 @@ jobs:
           assert secrets['CLOUDFLARE_ACCOUNT_ID']['required'] is False
           inputs = on['workflow_call']['inputs']
           assert inputs['wrangler-version']['required'] is True
-          assert inputs['same-run-proof']['type'] == 'boolean'
+          assert inputs['source-ref']['required'] is True
+          assert inputs['ci-run-id']['required'] is True
+          assert 'same-run-proof' not in inputs
           job = wf['jobs']['deploy']
           assert job['concurrency']['cancel-in-progress'] is False
           env_name = job['environment']['name']
           assert 'inputs.environment' in env_name
           uses = [step.get('uses', '') for step in job['steps'] if isinstance(step, dict)]
-          assert any(item.startswith('nocoo/base-ci/.github/actions/release-source@e92dc06d79019c891cacf165d6bf7f234073c5f0') for item in uses)
+          assert any(item.startswith('nocoo/base-ci/.github/actions/release-source@0678bb2627b9c4fe3596580cc17eca18258deca0') for item in uses)
           assert not any(item.startswith('./.github/actions/release-source') for item in uses)
           text = pathlib.Path('.github/workflows/deploy-worker.yml').read_text()
           assert 'wrangler-action' not in text

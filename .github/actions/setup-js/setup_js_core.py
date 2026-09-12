@@ -241,6 +241,10 @@ def main():
 
         for d in dirs:
             cmd = get_install_command(d, pkg_mgr, policy)
+            expected = os.environ.get("IN_EXPECTED_RUNTIME", "")
+            actual = subprocess.check_output([pkg_mgr, "--version"], cwd=d, text=True).strip()
+            if expected and actual != expected:
+                raise ValueError(f"{pkg_mgr} in '{d}' selected {actual}, expected {expected}")
             cmd_str = " ".join(cmd)
             print(f"::group::Install in '{d}' ({cmd_str})")
             res = subprocess.run(cmd, cwd=d)

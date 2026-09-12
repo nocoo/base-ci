@@ -66,13 +66,10 @@ runs:
       env:
         PNPM_VERSION: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
       run: |
-        set -euo pipefail
-        if command -v corepack >/dev/null 2>&1; then
-          corepack enable
-          corepack prepare "pnpm@$PNPM_VERSION" --activate
-        else
-          npm install -g "pnpm@$PNPM_VERSION"
-        fi
+        npm install --global --ignore-scripts "pnpm@$PNPM_VERSION"
+        export NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS=false
+        echo 'NPM_CONFIG_MANAGE_PACKAGE_MANAGER_VERSIONS=false' >> "$GITHUB_ENV"
+        test "$(pnpm --version)" = "$PNPM_VERSION"
 
     - name: Setup npm
       if: inputs.package-manager == 'npm'
@@ -90,5 +87,6 @@ runs:
         IN_PKG_MGR: ${{ inputs.package-manager }}
         IN_WORKDIR: ${{ inputs.working-directory }}
         IN_EXTRA_DIRS: ${{ inputs.extra-install-dirs }}
+        IN_EXPECTED_RUNTIME: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
       run: |
         python3 "${{ github.action_path }}/setup_js_core.py" install

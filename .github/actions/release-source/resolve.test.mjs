@@ -215,6 +215,36 @@ test('GITHUB_EVENT_NAME is required and pull_request is rejected unconditionally
   assert.equal(nested['target-sha'], SHA);
 });
 
+test('schedule and release callers may present a proven main push run', async () => {
+  const fetchImpl = api({
+    [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload({ event: 'push', head_branch: 'main' }),
+  });
+  for (const eventName of ['schedule', 'release']) {
+    const resolved = await resolveReleaseSource(
+      baseOptions({ sourceRunId: String(RUN_ID), eventName, fetchImpl }),
+    );
+    assert.equal(resolved['target-sha'], SHA);
+    assert.equal(resolved['source-run-id'], String(RUN_ID));
+  }
+});
+
+test('default allowed-source-events=push still rejects a scheduled CI run', async () => {
+  await assert.rejects(
+    () =>
+      resolveReleaseSource(
+        baseOptions({
+          sourceRunId: String(RUN_ID),
+          eventName: 'schedule',
+          fetchImpl: api({
+            [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload({ event: 'schedule' }),
+          }),
+        }),
+      ),
+    /Rejected source event "schedule"/,
+  );
+  assert.equal(FORBIDDEN_SOURCE_EVENTS.includes('schedule'), false);
+});
+
 test('rejects fork, PR CI, wrong path/name, failed conclusion and short SHA', async () => {
   const cases = [
     [{ head_repository: { full_name: 'evil/hermes' } }, /head repository/],

@@ -22,7 +22,6 @@ export const FORBIDDEN_SOURCE_EVENTS = Object.freeze([
   'issue_comment',
   'issues',
   'fork',
-  'schedule',
 ]);
 
 export const ALLOWED_DEPLOY_EVENTS = Object.freeze([
@@ -30,6 +29,8 @@ export const ALLOWED_DEPLOY_EVENTS = Object.freeze([
   'push',
   'workflow_dispatch',
   'workflow_call',
+  'schedule',
+  'release',
 ]);
 
 export function isFullSha(value) {
@@ -124,7 +125,7 @@ export function assertDeployEvent(eventName) {
   if (!name) {
     throw new Error('GITHUB_EVENT_NAME is required');
   }
-  if (name.startsWith('pull_request') || FORBIDDEN_SOURCE_EVENTS.includes(name)) {
+  if (name.startsWith('pull_request')) {
     throw new Error(`Rejected deploy event "${name}"`);
   }
   if (!ALLOWED_DEPLOY_EVENTS.includes(name)) {

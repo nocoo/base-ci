@@ -81,17 +81,17 @@ def resolve_runtimes(workdir: str, pkg_mgr: str, req_runtime: str, req_node: str
                         eff_runtime = clean_version(content.splitlines()[0])
                         break
                 if not eff_runtime:
-                    eff_runtime = "1.4.0"
+                    eff_runtime = "1.4.2"
         elif pkg_mgr == "pnpm":
             if pm_name == "pnpm" and pm_version:
                 eff_runtime = pm_version
             else:
-                eff_runtime = "10.5.2"
+                eff_runtime = "10.34.5"
         elif pkg_mgr == "npm":
             if pm_name == "npm" and pm_version:
                 eff_runtime = pm_version
             else:
-                eff_runtime = "11.5.1"
+                eff_runtime = "11.19.1"
 
     validate_exact_version(pkg_mgr, eff_runtime)
     return eff_runtime, eff_node, pkg_mgr

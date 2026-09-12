@@ -7,7 +7,7 @@ inputs:
     required: false
     default: "bun"
   runtime-version:
-    description: "Runtime version for bun/pnpm/node (empty = read from version file / packageManager or fallback default)"
+    description: "Exact Bun, npm, or pnpm version (empty = version file, packageManager, or documented default)"
     required: false
     default: ""
   node-version:

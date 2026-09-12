@@ -74,6 +74,15 @@ runs:
           npm install -g "pnpm@$PNPM_VERSION"
         fi
 
+    - name: Setup npm
+      if: inputs.package-manager == 'npm'
+      shell: bash
+      env:
+        NPM_VERSION: ${{ steps.resolve-runtime.outputs.effective-runtime-version }}
+      run: |
+        npm install --global --ignore-scripts "npm@$NPM_VERSION"
+        test "$(npm --version)" = "$NPM_VERSION"
+
     - name: Install dependencies across root and extra directories
       shell: bash
       env:

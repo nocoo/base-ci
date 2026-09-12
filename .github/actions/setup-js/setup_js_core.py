@@ -8,27 +8,19 @@ lockfile checking, path traversal validation, and install command construction.
 import os
 import sys
 import json
+import re
 import subprocess
 from typing import List, Dict, Optional, Tuple
-
-EXACT_BANNED = {"latest", "stable", "lts", "current", "node", "lts/*", "lts/-1"}
 
 def clean_version(v: Optional[str]) -> str:
     if not v:
         return ""
-    v = v.strip().lstrip("v")
+    v = v.strip().removeprefix("v")
     return v
 
 def validate_exact_version(kind: str, v: str) -> None:
-    if not v:
-        raise ValueError(f"{kind} version cannot be empty")
-    v_lower = v.lower()
-    if v_lower in EXACT_BANNED or any(c in v for c in [">", "<", "^", "~", "*", "x", "X"]):
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', v):
         raise ValueError(f"{kind} version must be an exact version (e.g. 1.4.0, 26.8.1), got '{v}'")
-    # Must contain at least major.minor (e.g. reject bare "22")
-    parts = v.split(".")
-    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
-        raise ValueError(f"{kind} version must be exact major.minor[.patch] (e.g. 26.8.1, not bare '{v}')")
 
 def read_file(path: str) -> str:
     try:
@@ -99,7 +91,6 @@ def resolve_runtimes(workdir: str, pkg_mgr: str, req_runtime: str, req_node: str
             if pm_name == "npm" and pm_version:
                 eff_runtime = pm_version
             else:
-                # Default npm version bundled with Node 26.8.1
                 eff_runtime = "11.5.1"
 
     validate_exact_version(pkg_mgr, eff_runtime)

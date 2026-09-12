@@ -29,6 +29,9 @@ class TestSetupJsCore(unittest.TestCase):
             validate_exact_version("Node", "^1.0.0")
         with self.assertRaises(ValueError):
             validate_exact_version("Node", "stable")
+        for version in ("22.14", "22.14.0\nNEXT=value", "22.14.not-a-patch"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                validate_exact_version("Node", version)
 
     def test_resolve_runtimes_package_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:

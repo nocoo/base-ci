@@ -1,78 +1,43 @@
 # base-ci
 
-Reusable GitHub Actions for Bun/TypeScript repos (6DQ jobs + SSH deploy action).
-Profile: docs-config
-Direction: [README.md](README.md). No `docs/` tree. Frameworks must not rewrite this file.
+Reusable GitHub Actions for quality checks, native jobs, security and verified releases. Profile: docs-config. Human contract: [README.md](README.md); executable contracts: `.github/workflows/` and `.github/actions/`.
 
-## Sources of Truth
+## Invariants
 
-This file is the **contract**. Workflows and self-test CI are **enforcement**. If they disagree, that is a failure — raise enforcement; never lower this file.
+- Consumers and internal cross-repository actions use full immutable commit SHAs. Never replace internal composite references with relative paths: checkout contains the consumer repository.
+- All enabled quality jobs must succeed and report the same checked out SHA before the aggregate emits `tested-sha`.
+- Runtime versions are exact, package installation is frozen, and install-policy preserves each consumer's explicit lifecycle requirements. Extra install directories are repository-root relative.
+- CI receives only explicitly mapped test credentials. Production credentials belong to deployment jobs and their exact GitHub environments. Never pass `toJSON(secrets)` into an environment map.
+- Release source proof uses the GitHub API and a selected run/tag. Reject PR/fork evidence, mismatched workflow/repository/SHA and stale continuous deployments. Never add a latest-green or github.sha fallback.
+- Production deployment concurrency does not cancel a deployment in progress. D1 migrations and deployment happen only after source proof and freshness checks.
+- Tested artifact promotion keeps identity and digest verification in the project adapter. The Worker workflow is a verified rebuild path.
+- Docker deployments use a complete manifest of SHA-matched image digests. Preserve actual server Compose settings, serial pulls and caller health checks.
+- Do not lower tests, coverage or security checks to make a migration green. An explicitly requested missing artifact is an error.
+- Publish immutable `v2026.N` releases after provider checks and consumer validation. The historical `v2026` moving tag is not the current version. The old `bun-quality.yml` interface is not used by new integrations.
 
-| Fact | Where |
-|---|---|
-| Agent handbook | this file |
-| Human docs | README.md, `.github/actions/ssh-deploy/README.md` |
-| Version | git tags `v2026`, `v2026.N` (latest `v2026.6`) |
-| Enforcement | `.github/workflows/self-test.yml`, `self-test-ssh-deploy.yml` |
-| Machine rules | global `AGENTS.md`, `rules/git-commit.md` |
-| Accidents | [Retrospective.md](Retrospective.md) |
-| Env files | omit |
+## Layout
 
-## Project Invariants
-
-- Consumers should pin `nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.N`. Moving tag `v2026` currently points at `v2026.1`, not latest `v2026.6` — do not treat `@v2026` as current.
-- This repo must not store caller secrets. `secrets: inherit` stays on the caller.
-- `ignore-scripts` / `trusted-native-deps` are supply-chain contract: keep them consistent with the caller’s `package.json#trustedDependencies`.
-- Changing `bun-quality.yml` inputs or job names is a breaking change; bump a `v2026.N` tag and keep `v2026` moving only when intended.
-- Do not weaken self-test assertions to land a workflow edit.
-
-## Stack / Layout
-
-| Component | Choice |
-|---|---|
-| Language | YAML + composite actions (bash) |
-| Package manager | omit (fixture Bun locks only under `.github/fixtures/`) |
-| Runtime | GitHub Actions |
-| Lint | YAML parse in `self-test.yml` |
-| Tests | `self-test.yml` + `self-test-ssh-deploy.yml` |
-| Data | none |
-
-```
-.github/workflows/bun-quality.yml     reusable 6DQ workflow
-.github/workflows/self-test.yml       syntax + fixture run
-.github/workflows/self-test-ssh-deploy.yml  ssh-deploy smoke
-.github/actions/ssh-deploy/           composite SSH deploy
-.github/fixtures/self-test/           dummy Bun app for the reusable workflow
-```
-
-## Commands
-
-No root package scripts. This machine has no PyYAML. Validation is GitHub `self-test.yml` on push/PR to `main`.
+| Component | Purpose |
+| --- | --- |
+| `quality.yml` | Boolean JS quality and optional test/build switches |
+| `test-job.yml` | Portable runner/command, native setup, browser and reports |
+| `security.yml` | Verified scanners, multiple locks and custom project gates |
+| `workflow-lint.yml` | Actionlint, pin validation and optional YAML style |
+| `deploy-worker.yml`, `deploy-docker.yml` | Proven-source release workflows |
+| `setup-js`, `configure-env` actions | Validated runtime/install and environment setup |
+| `release-source`, `docker-manifest` actions | Source and multi-image release proof |
+| `ssh-deploy` action | SSH transport, with dedicated README and smoke test |
 
 ## Verification
 
-Status: `enforced` | `planned` | `manual` | `N/A`. `enforced` Evidence = hook/CI/config/script. `planned` has no Evidence.
+| Check | Enforcement |
+| --- | --- |
+| Workflow syntax and helper tests | `self-test.yml` |
+| Frozen install, runtime selection, real reusable workflows and scanners | `self-test-quality.yml` |
+| SSH behavior | `self-test-ssh-deploy.yml` |
+| Release proof and deployment interface | `self-test-release.yml` |
+| Actual application/deployment behavior | Consumer CI and Release runs |
 
-docs-config: omit product L1/L2/L3/G2/build/release rows. This repo’s bar is self-test CI.
+Local checks: `actionlint -shellcheck= -pyflakes=`, Node tests under the two release actions, and Python unittest discovery under `setup-js` and `configure-env`. Fixture locks must be generated by real supported package managers and must not contain a workstation registry proxy.
 
-| Change | Proof | Status | Evidence |
-|---|---|---|---|
-| Workflow syntax | YAML load + a few input asserts | enforced | `self-test.yml` `validate` (not every public input/job id) |
-| Reusable workflow behavior | caller `uses: bun-quality.yml` | planned | — (self-test mirrors install recipes, does not call the reusable workflow) |
-| SSH deploy action | smoke workflow | enforced | `self-test-ssh-deploy.yml` on PR to `main` (push trigger is still `feat/ssh-deploy-action` only) |
-| Types / lint / coverage | n/a product suite | N/A | — |
-| Docs | README matches new inputs | manual | human review |
-| Release | annotated tag `v2026.N`; move `v2026` only when intended | manual | operator `git tag` |
-
-No local husky. `--no-verify` still forbidden if hooks appear later.
-
-## Retrospective
-
-| Kind | Where |
-|---|---|
-| Accident narrative | [Retrospective.md](Retrospective.md) |
-| Recurring project rule | one line here (cap ~10) |
-| Cross-project | nmem / global rules |
-| Checkable rule | workflow assert |
-
-- (none yet)
+Keep project-specific deployment commands in small adapters when a reusable workflow cannot preserve their behavior. Do not add a new abstraction for a single platform without a second concrete consumer.

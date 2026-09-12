@@ -1,330 +1,177 @@
 # base-ci
 
-Reusable GitHub Actions workflows for Bun/TypeScript projects. Implements a 6-dimension quality system.
+Shared GitHub Actions workflows for nocoo projects: JavaScript quality checks, native test jobs, security scans, and releases that prove which commit passed CI.
 
-## Quality Dimensions
+Consumers keep their triggers, project commands, deployment environment and a few switches. Package installation, runtime setup, scanning, artifact handling and release source validation live here. Pin every reference to the full commit SHA from a reviewed release. `BASE_CI_SHA` in the examples is a placeholder that must be replaced with a literal 40-character SHA.
 
-| Layer | Name | Description |
-|-------|------|-------------|
-| L1 | Unit Tests | Unit/component tests with coverage |
-| L2 | API E2E | Real HTTP tests against test infrastructure |
-| L3 | Browser E2E | Playwright browser automation |
-| G1 | Static Analysis | TypeScript type-check + ESLint |
-| G2 | Security | Gitleaks (secrets) + OSV-Scanner (dependencies) |
-| Worker | Edge Runtime | Cloudflare Worker unit tests |
+## Choose a workflow
 
-## Usage
+| Workflow | Use it for |
+| --- | --- |
+| [quality.yml](.github/workflows/quality.yml) | Bun, npm or pnpm typecheck, lint, unit tests and security; optional build, L2, L3, Worker and package checks |
+| [test-job.yml](.github/workflows/test-job.yml) | One command with shared setup, a caller-owned runner matrix, Python or Node without JS dependencies, and optional browser/report support |
+| [security.yml](.github/workflows/security.yml) | Multiple lockfiles, directory or full-history secret scanning, or an existing project security gate |
+| [workflow-lint.yml](.github/workflows/workflow-lint.yml) | Actionlint, immutable base-ci references, optional required release template and yamllint |
+| [deploy-worker.yml](.github/workflows/deploy-worker.yml) | Rebuild a proven CI commit, optionally migrate D1, deploy locked Wrangler and verify production |
+| [deploy-docker.yml](.github/workflows/deploy-docker.yml) | Build one or more GHCR images from a proven CI commit and deploy their exact digests through Docker Compose over SSH |
 
-### Basic (L1 + G1 + G2)
+The workflow files define the complete input and output contracts. `bun-quality.yml` is the older string-switch interface; new migrations use `quality.yml`. Historical behavior remains available through immutable commits and the `v2026.1`–`v2026.6` tags. The old moving `v2026` alias is not an upgrade policy.
+
+## JavaScript CI
 
 ```yaml
-# .github/workflows/ci.yml
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
+permissions:
+  contents: read
 jobs:
   quality:
-    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.6
+    uses: nocoo/base-ci/.github/workflows/quality.yml@BASE_CI_SHA
     with:
-      bun-version: "1.3.11"
-    secrets: inherit
+      runtime-version: '1.4.2'
+      install-policy: blocked
+      coverage-path: coverage
+      build: true
+      l2: true
+      l2-command: bun run test:api
+      l3: true
+      l3-command: bun run test:e2e
 ```
 
-### With Pre-build Step (Next.js)
+Typecheck, lint, unit and security checks default to enabled. `build`, `l2`, `l3`, `worker` and `package-check` default to disabled. Disabling a core check requires an explanation in `disabled-check-reasons`, for example `'{"typecheck":"Plain JavaScript; no TypeScript sources"}'` with `typecheck: false`.
+
+Commands default to the selected package manager's `run typecheck`, `run lint`, `run test:coverage` and corresponding optional scripts. Override commands when a project already has a different entry point. Commands execute through `bash -euo pipefail -c`; `cd`, pipelines, quotes and multiline scripts retain shell behavior.
+
+`prepare-command` runs before checks in each relevant isolated job. Use it when tests need a built library. Enabling the separate `build` job does not put its output in other jobs. Worker preparation is separate: `worker-prepare-command` defaults to empty.
+
+`coverage-path` is explicitly opt-in. It must point to a real report, relative to the repository root. A requested missing report fails the job. Build artifacts use `artifact-name` and `artifact-paths`. The successful aggregate emits `tested-sha` only after every enabled job succeeds and reports the same checked out commit.
+
+## Runtime and installation policy
+
+| Setting | Contract |
+| --- | --- |
+| `package-manager` / `runtime` | `bun`, `npm`, `pnpm`; `test-job` also accepts `none` |
+| `runtime-version` | An exact package manager version, including the patch |
+| `node-version` | An exact Node version; independent of the package manager version |
+| Runtime resolution | Explicit input, project version metadata, then the pinned default |
+| Defaults | Bun 1.4.2, Node 26.8.1, npm 11.19.1, pnpm 10.34.5 |
+| `install-policy: blocked` | Frozen install with lifecycle scripts disabled |
+| `install-policy: trusted` | Bun only; every installed directory must declare `trustedDependencies` explicitly |
+| `install-policy: project` | Frozen install using the project's lifecycle policy |
+| `working-directory` | Command and primary install directory, relative to the repository root |
+| `extra-install-dirs` | Additional frozen installs, always relative to the repository root |
+
+The installer verifies the actual package manager version in every install directory. Explicit pnpm versions cannot silently switch to a different `packageManager` value. Every install requires a committed lockfile; an absent lockfile is a configuration error. Paths cannot escape the checkout through traversal or symlinks.
+
+Existing applications may deliberately pin earlier supported versions, such as Bun 1.2.15 or a Node LTS release. Updating the shared workflow reference does not require changing those application runtimes.
+
+## Native jobs and browser tests
 
 ```yaml
 jobs:
-  quality:
-    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.6
+  offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+        python: ['3.11', '3.14']
+    uses: nocoo/base-ci/.github/workflows/test-job.yml@BASE_CI_SHA
     with:
-      bun-version: "1.3.11"
-      pre-command: "bun run build --no-lint"
-      typecheck-command: "bun x tsc --noEmit"
-    secrets: inherit
+      runner: ${{ matrix.os }}
+      runtime: none
+      python-version: ${{ matrix.python }}
+      pre-command: |
+        python -m venv --copies .venv
+        .venv/bin/python -m pip install -r requirements.txt
+      command: .venv/bin/python -I -B tests/run.py
 ```
 
-### Full Stack (L1 + L2 + L3 + G1 + G2 + Worker)
+With `runtime: none`, Node or Python can be selected without installing JS packages. Swift, Rust and Go projects can retain their platform/toolchain steps and reuse the [setup-js composite](.github/actions/setup-js/action.yml) where needed.
 
-For projects with E2E tests requiring secrets (Cloudflare D1, R2, KV, etc.), define local jobs with full secret control:
+Test jobs configure the environment and run `pre-command` before browser installation. `browser-working-directory` chooses the package containing Playwright; `quality.yml` exposes this as `l3-browser-directory`. Set `artifact-name`, `artifact-path` and `artifact-retention-days` to preserve project test evidence.
+
+Pass public environment values through `env-json`. Pass only the named test credentials a job needs through the `test-env-json` secret. Values are validated and individually masked; multiline strings are preserved. Do not serialize the entire `secrets` context into a test environment. Caller-level `env` is not automatically inherited by a reusable workflow.
+
+## Security
+
+The shared scanner installs Gitleaks 8.30.1 and OSV Scanner 2.5.1 from versioned release assets with verified SHA-256 checksums. `lockfiles` accepts multiple paths relative to `working-directory`; every declared file must exist. Project scanner configurations and reports stay in the consumer repository.
+
+`scan-history: true` fetches and scans the full Git history. The default scans the checked out directory. Projects with stronger or specialized security gates can run them through `security-command`, with the built-in scans switched off explicitly and their original Git range, configuration and reports preserved.
+
+## Release source proof
+
+Both deployment workflows use [release-source](.github/actions/release-source/action.yml). It validates GitHub API responses for the selected run: repository and head repository, workflow path and name, branch, event, completion, conclusion and exact SHA. List API filters are followed by a direct GET of the selected run.
+
+| Input | Meaning |
+| --- | --- |
+| `expected-workflow-path` | Canonical CI file, normally `.github/workflows/ci.yml` |
+| `expected-workflow-name` | Canonical CI name, normally `CI` |
+| `expected-branch` | Expected CI branch, normally `main`; pass the tag name when proving tag CI |
+| `source-run-id` | Explicit successful CI run ID, including manual deployments |
+| `tag` | Optional tag, resolved to a commit and checked against the proven CI run |
+
+There is no fallback to `github.sha` or an unrelated latest green run. PR and fork evidence is rejected. Continuous deployments check the branch tip again immediately before migration/deployment. Tagged releases prove the tag's exact commit. The source action and Worker template additionally support an expected `source-sha` and optional tag/package-version matching.
+
+The source action emits `target-sha` and `source-run-id`. A scheduled or `release` caller may present valid push-CI evidence; its trigger does not itself prove CI success.
+
+## Worker releases
 
 ```yaml
-name: CI
-
+name: Release
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-  pull_request:
-    branches: [main]
-
 jobs:
-  # L1 + G1 + G2 from base-ci
-  quality:
-    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.6
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      actions: read
+    uses: nocoo/base-ci/.github/workflows/deploy-worker.yml@BASE_CI_SHA
     with:
-      bun-version: "1.3.11"
-      pre-command: "bun run build --no-lint"
-      # Disable built-in L2/L3/Worker (define locally for secret control)
-      enable-l2: "false"
-      enable-l3: "false"
-      enable-worker: "false"
+      source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
+      runtime-version: '1.4.2'
+      wrangler-version: '4.131.1'
+      environment: Production
+      build-command: bun run build
+      d1-migrations: true
+      d1-databases: app-db
+      verify-command: curl --fail --silent --show-error https://example.com/api/live
     secrets: inherit
-
-  # L2: API E2E (local job for full secret control)
-  api-e2e:
-    name: "L2 API E2E"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      # D1 test database
-      CLOUDFLARE_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
-      D1_TEST_DATABASE_ID: ${{ secrets.D1_TEST_DATABASE_ID }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      # D1 Worker proxy (test)
-      D1_TEST_PROXY_URL: ${{ secrets.D1_TEST_PROXY_URL }}
-      D1_TEST_PROXY_SECRET: ${{ secrets.D1_TEST_PROXY_SECRET }}
-      # R2 test bucket
-      R2_TEST_BUCKET_NAME: ${{ secrets.R2_TEST_BUCKET_NAME }}
-      R2_TEST_PUBLIC_DOMAIN: ${{ secrets.R2_TEST_PUBLIC_DOMAIN }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      # KV test namespace
-      KV_TEST_NAMESPACE_ID: ${{ secrets.KV_TEST_NAMESPACE_ID }}
-      # Auth
-      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.11"
-      - run: bun install --frozen-lockfile
-      - run: bun run build --no-lint
-      - run: bun run test:api
-
-  # L3: Browser E2E (local job for full secret control)
-  browser-e2e:
-    name: "L3 Browser E2E"
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      # Same secrets as api-e2e...
-      CLOUDFLARE_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
-      D1_TEST_DATABASE_ID: ${{ secrets.D1_TEST_DATABASE_ID }}
-      # ... (see api-e2e for full list)
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.11"
-      - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium
-      - run: bun run build --no-lint
-      - run: bun run test:e2e:pw
-
-  # Worker: Cloudflare Worker tests
-  worker-tests:
-    name: "Worker Tests"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: worker
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.11"
-      - run: bun install --frozen-lockfile
-      - run: bun run test
 ```
 
-## Inputs
+`wrangler-version` must equal the frozen local dependency's actual version. `deploy-command` is a Wrangler subcommand. `deploy-script` instead invokes an existing complete project release command, such as GeekHub's production guard, migrations, build and deployment. A deployment holds a non-cancelling lock for its production environment.
 
-### Runtime
+GitHub environment names are exact and case-sensitive. The called deployment job selects the environment and reads its `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. CI jobs do not need production deployment credentials.
 
-| Input | Default | Description |
-|-------|---------|-------------|
-| `bun-version` | `"latest"` | Bun version (e.g., `"1.3.11"`) |
-| `pre-command` | `""` | Setup command before tests (e.g., `"bun run build"`) |
-| `ignore-scripts` | `false` | Pass `--ignore-scripts` to every `bun install` step (see **Hardening** below) |
-| `extra-install-dirs` | `""` | Comma-separated subdirs that need their own `bun install` (e.g. `"worker"` or `"worker,dashboard"`) |
-| `trusted-native-deps` | `""` | Comma-separated packages whose postinstall must still run when `ignore-scripts: true` (native bindings: `better-sqlite3`, `sharp`, etc.). When non-empty, `--ignore-scripts` is NOT forwarded; defense moves to bun's `trustedDependencies` whitelist — see **Native dependencies + ignore-scripts** below |
+This workflow rebuilds the proven source. Projects promoting already tested artifacts keep their artifact identity/digest validation in a small adapter using the shared source and setup actions. A warning-only artifact download is not a replacement for that validation.
 
-### L1: Unit Tests
+## Docker releases
 
-| Input | Default | Description |
-|-------|---------|-------------|
-| `test-command` | `"bun run test:unit:coverage"` | Unit test command |
-| `upload-coverage` | `"true"` | Upload coverage artifact |
-| `coverage-path` | `"coverage"` | Coverage output directory |
-
-### G1: Static Analysis
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `lint-command` | `"bun run lint"` | Lint command |
-| `typecheck-command` | `"bun run typecheck"` | Type-check command |
-
-### G2: Security
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `enable-security` | `"true"` | Enable gitleaks + osv-scanner |
-| `osv-lockfile` | `"bun.lock"` | Lockfile for osv-scanner |
-| `osv-config` | `""` | Path to osv-scanner config |
-
-### L2: API E2E (opt-in)
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `enable-l2` | `"false"` | Enable L2 API E2E tests |
-| `l2-command` | `"bun run test:api"` | L2 test command |
-
-### L3: Browser E2E (opt-in)
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `enable-l3` | `"false"` | Enable L3 Playwright tests |
-| `l3-command` | `"bun run test:e2e:pw"` | L3 test command |
-| `l3-browser` | `"chromium"` | Browser to install |
-
-### Worker (opt-in)
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `enable-worker` | `"false"` | Enable Worker tests |
-| `worker-command` | `"bun run test"` | Worker test command |
-| `worker-directory` | `"worker"` | Worker project directory |
-
-## Hardening (recommended)
-
-Since v2026.2, `bun-quality.yml` ships two opt-in inputs that harden CI against npm supply-chain attacks (Shai-Hulud-style worms that piggyback on lifecycle scripts):
+Use the same trigger and source inputs with `deploy-docker.yml`, then provide:
 
 ```yaml
-jobs:
-  quality:
-    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.2
-    with:
-      ignore-scripts: true
-      extra-install-dirs: "worker"
-    secrets: inherit
+with:
+  source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
+  environment: app / production
+  images: '[{"image":"ghcr.io/nocoo/app-web","service":"web","build-args":"APP=web"},{"image":"ghcr.io/nocoo/app-admin","service":"admin","build-args":"APP=admin"}]'
+  deploy-directory: /opt/app
+  remote-verify-command: ./verify-containers.sh
+  verify-command: ./scripts/verify-production.sh
 ```
 
-### `ignore-scripts: true`
+The caller needs `contents: read`, `actions: read` and `packages: write`. Credentials are `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, optional `VPS_PORT`/`VPS_KNOWN_HOSTS`, and `GHCR_PULL_USER`/`GHCR_PULL_TOKEN`. `BUILD_ARGS` carries additional caller build arguments.
 
-Forwards `--ignore-scripts` to every `bun install --frozen-lockfile` step **only when `trusted-native-deps` is empty**. In that mode bun drops every lifecycle script — postinstall hooks for compromised packages cannot run, even if a malicious version is pinned in `bun.lock`. Pick this mode when the dependency graph has **no** native packages (or when you have vendored their bindings).
+Every image has the proven source SHA as its tag and OCI revision. A release manifest must contain exactly one valid digest for every requested image/service, all from that same source. On the server, the workflow reads the actual Compose configuration, overrides only the selected images with digests, pulls them serially and recreates those services. It preserves other service settings and project health checks. Successful manifests are recorded in `.base-ci-releases/<SHA>.json`; a temporary effective Compose file is removed after use. The server needs Python 3 and Docker Compose v2.
 
-When `trusted-native-deps` is non-empty, `--ignore-scripts` is **not** forwarded; defense moves to bun's `trustedDependencies` whitelist instead — see [Native dependencies + ignore-scripts](#native-dependencies--ignore-scripts) below. The two paths are mutually exclusive because `bun install --ignore-scripts` is a hard switch that overrides `trustedDependencies`, and `bun pm trust` cannot recover scripts that were never queued (verified on bun 1.3.x).
+## Verification and upgrades
 
-### `extra-install-dirs: "worker"` (or `"worker,dashboard"`)
+Four workflows enforce the provider: syntax and installation policy, real quality/test/scanner fixtures, SSH action behavior, and release-source/manifest contracts. Fixtures include Linux/macOS, Python, npm, pnpm, an older supported Bun and the current Bun. Release source validation has also been exercised against real consumer CI runs. Production end-to-end evidence comes from consumer Release runs.
 
-After the main `bun install`, each job recurses into every comma-separated subdirectory and runs `bun install --frozen-lockfile` there (inheriting the `ignore-scripts` flag). Use for repos with fixed sub-trees that have their own lockfile, like Cloudflare Worker subprojects or standalone dashboards.
-
-The step is a no-op when the input is `""` (default), so this is safe to set globally.
-
-## Native dependencies + ignore-scripts
-
-`bun install --ignore-scripts` is a hard switch: bun drops every lifecycle script entirely instead of queuing it for later. That means **the `bun pm trust` recovery path is unusable on bun** — running `bun pm trust <pkg>` after `bun install --ignore-scripts` reports "0 scripts ran" and exits 1, and native bindings stay missing. This is verified on bun 1.3.x (see [STU-95](https://github.com/nocoo/base-ci) for a minimal repro: `bun add better-sqlite3 --ignore-scripts && bun pm trust better-sqlite3` ⇒ exit 1, binding not built).
-
-The right model for native deps under bun is bun's own `trustedDependencies` whitelist. By default bun runs postinstall scripts **only** for packages listed in the caller repo's `package.json#trustedDependencies` — every other postinstall is blocked. That is exactly the Shai-Hulud defense semantic we want, and it does not need `--ignore-scripts`.
-
-Since v2026.4, `trusted-native-deps` switches `bun-quality.yml` into this mode. When you pass a non-empty list:
-
-1. `--ignore-scripts` is **not** forwarded — bun runs with its default lifecycle policy.
-2. Bun consults `package.json#trustedDependencies` and runs postinstall **only** for packages on that list.
-3. Every other postinstall (including any malicious lifecycle script in a transitive dep) stays blocked.
-
-To use it, declare the same packages in **both** places — `package.json` for bun, and `trusted-native-deps` for base-ci. The two must stay in sync; the workflow input exists for documentation and as a validation hook for future tooling.
-
-```jsonc
-// package.json (caller repo)
-{
-  "trustedDependencies": ["better-sqlite3", "sharp"]
-}
-```
-
-```yaml
-# .github/workflows/ci.yml (caller repo)
-jobs:
-  quality:
-    uses: nocoo/base-ci/.github/workflows/bun-quality.yml@v2026.4
-    with:
-      ignore-scripts: true
-      trusted-native-deps: "better-sqlite3,sharp"
-    secrets: inherit
-```
-
-Common entries: `better-sqlite3`, `sharp`, `esbuild`, `unrs-resolver`, `@swc/core`, the Next.js `@next/swc-*` binary. If a native dependency is missing from both lists, builds will fail with a missing-binary error — that is the signal to add it (vetted) to the whitelist.
-
-### When to leave `trusted-native-deps` empty
-
-If your dependency graph genuinely has **no** native packages (or you have vendored every binding), leave `trusted-native-deps: ""` and keep `ignore-scripts: true`. That is the hardest mode: `--ignore-scripts` is forwarded, every lifecycle script is dropped, and `trustedDependencies` is irrelevant. No native-dep recovery path exists in this mode — pick it only when you do not need one.
-
-### Scope limitation
-
-`trusted-native-deps` is a documentation/sync field for the **top-level** install; the actual whitelist lives in the caller's top-level `package.json#trustedDependencies`. Subdirectory installs from `extra-install-dirs` consult their own `package.json#trustedDependencies` independently, so add the same entries there if a native dep lives inside (e.g.) `worker/`.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Parallel Execution                        │
-├─────────────────┬─────────────────┬─────────────────────────┤
-│ quality-gate    │ api-e2e (L2)    │ browser-e2e (L3)        │
-│ (L1+G1+G2)      │ (opt-in)        │ (opt-in)                │
-│                 │                 │                          │
-│ • Gitleaks      │ • Real HTTP     │ • Playwright            │
-│ • TypeScript    │ • Test DB/R2/KV │ • Test DB/R2/KV         │
-│ • ESLint        │                 │                          │
-│ • Unit tests    │                 │                          │
-│ • OSV-Scanner   │                 │                          │
-└─────────────────┴─────────────────┴─────────────────────────┘
-                            │
-                    ┌───────┴───────┐
-                    │ worker-tests  │
-                    │ (opt-in)      │
-                    │               │
-                    │ • Vitest      │
-                    └───────────────┘
-```
-
-All jobs run in **parallel** — no `needs` dependencies. This reduces CI time by ~50% compared to sequential execution.
-
-## Test Isolation
-
-For L2/L3 tests against Cloudflare resources, implement a 4-layer safety system:
-
-1. **Env override**: `D1_TEST_DATABASE_ID` → `CLOUDFLARE_D1_DATABASE_ID`
-2. **Inequality check**: `testDbId !== prodDbId`
-3. **Defensive guard**: Validation in DB helper functions
-4. **Marker table**: `_test_marker` table exists only in test DB
-
-This ensures tests **never** run against production resources.
-
-## Versioning
-
-Pin callers at `v2026.N` (current latest `v2026.6`):
-
-```bash
-git tag -a v2026.7 -m "2026.7"
-git push origin v2026.7
-```
-
-Move the floating `v2026` tag only when intended:
-
-```bash
-git tag -d v2026
-git push origin :refs/tags/v2026
-git tag -a v2026 -m "points at v2026.7"
-git push origin v2026
-```
-
-## License
-
-MIT
+For a provider update: change pinned tools once, run provider self-tests, migrate representative JS/native/Worker/Docker consumers, and create an immutable release. Consumers then update their full SHA and run their own checks. Keep application runtime upgrades separate when compatibility requires it. Manual package publication must use an existing intended version/tag; a successful YAML check is not evidence that a package was published.

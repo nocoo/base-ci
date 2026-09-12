@@ -1,5 +1,5 @@
 # Reusable Workers release. Pin callers to a full commit SHA.
-# Internal composite: nocoo/base-ci/.github/actions/release-source@29d2d74495ee53ea6e0ceae0f290b624bbe2026a
+# Internal composite: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
 # Do not change that pin to ./.github/actions/release-source (caller checkout is consumer source).
 
 name: Deploy Worker
@@ -229,7 +229,7 @@ jobs:
 
       - name: Resolve release source
         id: source
-        uses: nocoo/base-ci/.github/actions/release-source@29d2d74495ee53ea6e0ceae0f290b624bbe2026a
+        uses: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
         with:
           github-token: ${{ github.token }}
           expected-workflow-path: ${{ inputs.expected-workflow-path }}

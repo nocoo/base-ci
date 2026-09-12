@@ -35,7 +35,7 @@ export function parseBoolean(value, name) {
   throw new Error(`${name} must be true or false`);
 }
 
-export function parseRunId(value, name = 'source-run-id') {
+export function parseRunId(value, name = 'ci-run-id') {
   const raw = String(value ?? '').trim();
   if (!RUN_ID_RE.test(raw)) {
     throw new Error(`${name} must be a positive integer run ID`);
@@ -65,7 +65,7 @@ export function normalizeRepository(value) {
 export function normalizeWorkflowPath(value) {
   const path = String(value ?? '').trim();
   if (!WORKFLOW_PATH_RE.test(path)) {
-    throw new Error(`expected-workflow-path must be a .github/workflows/*.yml path, got "${path}"`);
+    throw new Error(`workflow-path must be a .github/workflows/*.yml path, got "${path}"`);
   }
   return path;
 }
@@ -73,7 +73,7 @@ export function normalizeWorkflowPath(value) {
 export function normalizeWorkflowName(value) {
   const name = String(value ?? '').trim();
   if (!WORKFLOW_NAME_RE.test(name)) {
-    throw new Error(`expected-workflow-name is missing or invalid: "${name}"`);
+    throw new Error(`workflow-name is missing or invalid: "${name}"`);
   }
   return name;
 }
@@ -81,7 +81,7 @@ export function normalizeWorkflowName(value) {
 export function normalizeBranch(value) {
   const branch = String(value ?? '').trim();
   if (!BRANCH_RE.test(branch) || branch.includes('..')) {
-    throw new Error(`expected-branch is invalid: "${branch}"`);
+    throw new Error(`branch is invalid: "${branch}"`);
   }
   return branch;
 }
@@ -93,6 +93,17 @@ export function normalizeTag(value) {
     throw new Error(`tag is invalid: "${raw}"`);
   }
   return raw.startsWith('refs/tags/') ? raw.slice('refs/tags/'.length) : raw;
+}
+
+export function parseSourceRef(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    throw new Error('source-ref is required');
+  }
+  if (isFullSha(raw)) {
+    return { kind: 'sha', sha: raw.toLowerCase(), tag: '' };
+  }
+  return { kind: 'tag', sha: '', tag: normalizeTag(raw) };
 }
 
 export function parseAllowedEvents(value) {
@@ -167,9 +178,6 @@ export function assertTrustedRun(run, expected) {
   if (!expected.allowedEvents.includes(run.event)) {
     throw new Error(`Rejected source event "${run.event}"; allowed: ${expected.allowedEvents.join(', ')}`);
   }
-  if (run.head_branch !== expected.branch) {
-    throw new Error(`Rejected source branch "${run.head_branch}"; expected "${expected.branch}"`);
-  }
   if (run.status !== 'completed') {
     throw new Error(`Source run ${run.id} is not completed (status "${run.status}")`);
   }
@@ -179,9 +187,9 @@ export function assertTrustedRun(run, expected) {
   const headSha = normalizeSha(run.head_sha, 'run.head_sha');
   return {
     runId: expected.runId,
-    targetSha: headSha,
+    sha: headSha,
     workflowPath: run.path,
-    headBranch: run.head_branch,
+    headBranch: String(run.head_branch ?? ''),
     event: run.event,
   };
 }
@@ -198,46 +206,7 @@ async function getRun(ctx, runId) {
     workflowPath: ctx.workflowPath,
     workflowName: ctx.workflowName,
     allowedEvents: ctx.allowedEvents,
-    branch: ctx.branch,
   });
-}
-
-function workflowFileName(workflowPath) {
-  return workflowPath.slice(workflowPath.lastIndexOf('/') + 1);
-}
-
-async function findSuccessfulRunForSha(ctx, sha) {
-  const fileName = workflowFileName(ctx.workflowPath);
-  const url = repoUrl(
-    ctx.apiBase,
-    ctx.repository,
-    `/actions/workflows/${encodeURIComponent(fileName)}/runs?head_sha=${encodeURIComponent(sha)}&status=completed&per_page=100`,
-  );
-  const payload = await githubJson(ctx.fetchImpl, url, ctx.token);
-  const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
-  const matching = [];
-  for (const run of runs) {
-    try {
-      matching.push(
-        assertTrustedRun(run, {
-          runId: parseRunId(run.id, 'run.id'),
-          repository: ctx.repository,
-          workflowPath: ctx.workflowPath,
-          workflowName: ctx.workflowName,
-          allowedEvents: ctx.allowedEvents,
-          branch: ctx.branch,
-        }),
-      );
-    } catch {
-      // List filters are not proof; only a later GET of a selected ID is.
-    }
-  }
-  const exact = matching.filter((run) => run.targetSha === sha);
-  if (exact.length === 0) {
-    throw new Error(`No successful ${ctx.workflowPath} run on ${ctx.branch} for ${sha}`);
-  }
-  exact.sort((a, b) => b.runId - a.runId);
-  return getRun(ctx, exact[0].runId);
 }
 
 async function peelTag(ctx, tag) {
@@ -312,13 +281,33 @@ async function packageVersionAt(ctx, sha) {
   return pkg.version;
 }
 
+async function resolveSourceSha(ctx, source) {
+  if (source.kind === 'sha') {
+    return source.sha;
+  }
+  return peelTag(ctx, source.tag);
+}
+
+async function assertHeadMatchesSha(ctx, proven, sourceSha) {
+  if (proven.headBranch === ctx.branch) {
+    return 'branch';
+  }
+  if (!proven.headBranch) {
+    throw new Error('Run head_branch is missing');
+  }
+  const peeled = await peelTag(ctx, proven.headBranch);
+  if (peeled !== sourceSha) {
+    throw new Error(
+      `Tag CI head_branch "${proven.headBranch}" peels to ${peeled}, not run SHA ${sourceSha}`,
+    );
+  }
+  return 'tag';
+}
+
 function output(result) {
   return {
-    'target-sha': result.targetSha,
-    'source-run-id': String(result.sourceRunId),
-    'event-type': result.eventType,
-    'workflow-path': result.workflowPath ?? '',
-    'head-branch': result.headBranch ?? '',
+    sha: result.sha,
+    'run-id': String(result.runId),
   };
 }
 
@@ -327,99 +316,56 @@ export async function resolveReleaseSource(options) {
   if (!token) {
     throw new Error('A GitHub token with actions:read is required');
   }
-  const callerEvent = String(options.callerEventName ?? '').trim();
-  if (callerEvent && FORBIDDEN_SOURCE_EVENTS.includes(callerEvent)) {
-    throw new Error(`Rejected caller event "${callerEvent}"`);
+  if (options.sameRunProof === true || options.sameRunProof === 'true') {
+    throw new Error('same-run-proof is not accepted; pass ci-run-id of a completed run');
   }
 
-  const sameRunProof = parseBoolean(options.sameRunProof, 'same-run-proof');
   const requireFreshMain = parseBoolean(options.requireFreshMain, 'require-fresh-main');
   const packageVersionMatch = parseBoolean(options.packageVersionMatch, 'package-version-match');
-  const sourceRunIdRaw = String(options.sourceRunId ?? '').trim();
-  const tag = normalizeTag(options.tag);
-  const requestedSha = String(options.sourceSha ?? '').trim();
-  const expectedSha = requestedSha ? normalizeSha(requestedSha, 'source-sha') : '';
+  const source = parseSourceRef(options.sourceRef);
+  const ciRunId = parseRunId(options.ciRunId, 'ci-run-id');
 
   const ctx = {
     token,
     fetchImpl: options.fetchImpl ?? fetch,
     apiBase: String(options.apiBase ?? 'https://api.github.com').replace(/\/$/, ''),
     repository: normalizeRepository(options.repository),
-    workflowPath: normalizeWorkflowPath(options.expectedWorkflowPath),
-    workflowName: normalizeWorkflowName(options.expectedWorkflowName),
+    workflowPath: normalizeWorkflowPath(options.workflowPath),
+    workflowName: normalizeWorkflowName(options.workflowName),
     allowedEvents: parseAllowedEvents(options.allowedSourceEvents),
-    branch: normalizeBranch(options.expectedBranch ?? 'main'),
+    branch: normalizeBranch(options.branch ?? 'main'),
     packageJsonPath: options.packageJsonPath ?? 'package.json',
   };
 
-  if (sameRunProof) {
-    if (sourceRunIdRaw || tag) {
-      throw new Error('same-run-proof cannot be combined with source-run-id or tag');
-    }
-    const githubSha = normalizeSha(options.githubSha, 'github.sha');
-    if (!expectedSha) {
-      throw new Error('same-run-proof requires source-sha from the successful needs jobs');
-    }
-    if (expectedSha !== githubSha) {
-      throw new Error('same-run-proof source-sha does not match github.sha');
-    }
-    const runId = parseRunId(options.githubRunId, 'github.run_id');
-    return output({
-      targetSha: expectedSha,
-      sourceRunId: runId,
-      eventType: 'same-run',
-      workflowPath: ctx.workflowPath,
-      headBranch: '',
-    });
+  const sourceSha = await resolveSourceSha(ctx, source);
+  const proven = await getRun(ctx, ciRunId);
+  if (proven.sha !== sourceSha) {
+    throw new Error(`source-ref SHA ${sourceSha} does not match run ${proven.runId} SHA ${proven.sha}`);
   }
 
-  if (!sourceRunIdRaw && !tag) {
-    throw new Error('Provide source-run-id, tag, or same-run-proof; refusing github.sha and latest-green fallback');
-  }
+  const headKind = await assertHeadMatchesSha(ctx, proven, sourceSha);
 
-  let proven;
-  if (sourceRunIdRaw) {
-    proven = await getRun(ctx, parseRunId(sourceRunIdRaw));
-    if (tag) {
-      const taggedSha = await peelTag(ctx, tag);
-      if (taggedSha !== proven.targetSha) {
-        throw new Error(`Tag "${tag}" commit ${taggedSha} does not match run ${proven.runId} SHA ${proven.targetSha}`);
-      }
+  if (requireFreshMain && source.kind !== 'tag' && headKind === 'branch') {
+    const tip = await defaultBranchSha(ctx);
+    if (tip !== proven.sha) {
+      throw new Error(`Stale deploy: run SHA ${proven.sha} is not the current ${ctx.branch} tip ${tip}`);
     }
-    if (requireFreshMain && !tag) {
-      const tip = await defaultBranchSha(ctx);
-      if (tip !== proven.targetSha) {
-        throw new Error(`Stale deploy: run SHA ${proven.targetSha} is not the current ${ctx.branch} tip ${tip}`);
-      }
-    }
-  } else {
-    const taggedSha = await peelTag(ctx, tag);
-    proven = await findSuccessfulRunForSha(ctx, taggedSha);
-    if (proven.targetSha !== taggedSha) {
-      throw new Error(`Selected run ${proven.runId} SHA ${proven.targetSha} does not match tag commit ${taggedSha}`);
-    }
-  }
-
-  if (expectedSha && expectedSha !== proven.targetSha) {
-    throw new Error(`source-sha ${expectedSha} does not match proven SHA ${proven.targetSha}`);
   }
 
   if (packageVersionMatch) {
-    if (!tag || !VERSION_TAG_RE.test(tag)) {
-      throw new Error('package-version-match requires a vX.Y.Z tag');
+    const tag = source.kind === 'tag' ? source.tag : '';
+    if (!VERSION_TAG_RE.test(tag)) {
+      throw new Error('package-version-match requires a vX.Y.Z source-ref tag');
     }
-    const version = await packageVersionAt(ctx, proven.targetSha);
+    const version = await packageVersionAt(ctx, proven.sha);
     if (version !== tag.slice(1)) {
-      throw new Error(`Tag ${tag} does not match package.json version ${version} at ${proven.targetSha}`);
+      throw new Error(`Tag ${tag} does not match package.json version ${version} at ${proven.sha}`);
     }
   }
 
   return output({
-    targetSha: proven.targetSha,
-    sourceRunId: proven.runId,
-    eventType: tag && !sourceRunIdRaw ? 'tag' : 'run',
-    workflowPath: proven.workflowPath,
-    headBranch: proven.headBranch,
+    sha: proven.sha,
+    runId: proven.runId,
   });
 }
 
@@ -439,27 +385,21 @@ export async function runCli(env = process.env, fetchImpl = fetch) {
   const resolved = await resolveReleaseSource({
     token: env.GITHUB_TOKEN,
     repository: env.GITHUB_REPOSITORY,
-    githubSha: env.GITHUB_SHA,
-    githubRunId: env.GITHUB_RUN_ID,
     apiBase: env.GITHUB_API_URL,
-    expectedWorkflowPath: env.RELEASE_EXPECTED_WORKFLOW_PATH,
-    expectedWorkflowName: env.RELEASE_EXPECTED_WORKFLOW_NAME,
+    workflowPath: env.RELEASE_WORKFLOW_PATH,
+    workflowName: env.RELEASE_WORKFLOW_NAME,
+    branch: env.RELEASE_BRANCH,
+    sourceRef: env.RELEASE_SOURCE_REF,
+    ciRunId: env.RELEASE_CI_RUN_ID,
     allowedSourceEvents: env.RELEASE_ALLOWED_SOURCE_EVENTS,
-    expectedBranch: env.RELEASE_EXPECTED_BRANCH,
-    sourceRunId: env.RELEASE_SOURCE_RUN_ID,
-    sourceSha: env.RELEASE_SOURCE_SHA,
-    tag: env.RELEASE_TAG,
-    sameRunProof: env.RELEASE_SAME_RUN_PROOF,
     requireFreshMain: env.RELEASE_REQUIRE_FRESH_MAIN,
     packageVersionMatch: env.RELEASE_PACKAGE_VERSION_MATCH,
     packageJsonPath: env.RELEASE_PACKAGE_JSON_PATH,
-    callerEventName: env.RELEASE_CALLER_EVENT_NAME,
+    sameRunProof: env.RELEASE_SAME_RUN_PROOF,
     fetchImpl,
   });
   writeGitHubOutput(resolved, env.GITHUB_OUTPUT);
-  console.log(
-    `Resolved release source ${resolved['target-sha']} (${resolved['event-type']}) run ${resolved['source-run-id']}`,
-  );
+  console.log(`Resolved release source ${resolved.sha} run ${resolved['run-id']}`);
   return resolved;
 }
 

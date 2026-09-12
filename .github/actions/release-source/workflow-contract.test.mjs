@@ -5,18 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
-const helperSha = 'e92dc06d79019c891cacf165d6bf7f234073c5f0';
 const workflow = readFileSync(join(root, '.github/workflows/deploy-worker.yml'), 'utf8');
 const action = readFileSync(join(root, '.github/actions/release-source/action.yml'), 'utf8');
 const selfTest = readFileSync(join(root, '.github/workflows/self-test-release.yml'), 'utf8');
+const pin = workflow.match(/nocoo\/base-ci\/\.github\/actions\/release-source@([a-f0-9]{40})/)?.[1];
 
-test('deploy-worker pins the immutable release-source SHA, not a relative composite path', () => {
-  assert.match(
-    workflow,
-    new RegExp(
-      `uses: nocoo/base-ci/\\.github/actions/release-source@${helperSha}`,
-    ),
-  );
+test('deploy-worker pins a full release-source SHA, not a relative composite path', () => {
+  assert.match(pin ?? '', /^[a-f0-9]{40}$/);
   assert.doesNotMatch(workflow, /uses: \.\/\.github\/actions\/release-source/);
   assert.match(workflow, /persist-credentials: false/);
 });
@@ -40,25 +35,23 @@ test('deploy-worker pins verified Actions SHAs and requires an exact Wrangler ve
   assert.match(workflow, /Locked local wrangler binary not found/);
 });
 
-test('release-source exposes the public proof inputs and outputs', () => {
+test('release-source exposes generic proof inputs and sha/run-id outputs', () => {
   for (const name of [
     'github-token',
-    'expected-workflow-path',
-    'expected-workflow-name',
-    'allowed-source-events',
-    'source-run-id',
-    'source-sha',
-    'tag',
-    'same-run-proof',
-    'require-fresh-main',
-    'package-version-match',
-    'caller-event-name',
+    'workflow-path',
+    'workflow-name',
+    'branch',
+    'source-ref',
+    'ci-run-id',
   ]) {
     assert.match(action, new RegExp(`^  ${name}:`, 'm'));
   }
-  for (const name of ['target-sha', 'source-run-id', 'event-type', 'workflow-path', 'head-branch']) {
+  for (const name of ['sha', 'run-id']) {
     assert.match(action, new RegExp(`^  ${name}:`, 'm'));
   }
+  assert.doesNotMatch(action, /^  same-run-proof:/m);
+  assert.doesNotMatch(action, /^  target-sha:/m);
+  assert.doesNotMatch(action, /^  source-run-id:/m);
 });
 
 test('self-test-release runs helper tests and does not deploy', () => {

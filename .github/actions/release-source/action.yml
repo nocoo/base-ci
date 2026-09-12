@@ -1,73 +1,50 @@
 name: Release source
-description: Fail-closed resolution of a proven commit SHA and CI run for production deploys
+description: Fail-closed GitHub API proof of a commit SHA and CI run for any deploy platform
 
 inputs:
   github-token:
-    description: Token with actions:read used to load the selected GitHub Actions run
+    description: Token with actions:read used to GET the selected CI run
     required: true
-  expected-workflow-path:
+  workflow-path:
     description: Canonical CI workflow path (example .github/workflows/ci.yml)
     required: true
-  expected-workflow-name:
-    description: Canonical CI workflow name (example CI)
+  workflow-name:
+    description: Canonical CI workflow name (example CI or Tests)
+    required: true
+  branch:
+    description: Default branch used for main CI and freshness (not compared to a tag CI head_branch)
+    required: false
+    default: main
+  source-ref:
+    description: Full commit SHA, tag name, or refs/tags/... that must match the proven run SHA
+    required: true
+  ci-run-id:
+    description: Explicit Actions run ID to GET and verify (workflow_run, manual, or tag CI)
     required: true
   allowed-source-events:
     description: Comma or newline separated events allowed on the proven CI run (default push)
     required: false
     default: push
-  expected-branch:
-    description: Branch that continuous deploy and CI proof must come from
-    required: false
-    default: main
-  source-run-id:
-    description: Explicit Actions run ID to prove. Required for workflow_run and manual run deploys
-    required: false
-    default: ""
-  source-sha:
-    description: Optional expected full SHA. If set it must match the proven SHA; it cannot replace proof
-    required: false
-    default: ""
-  tag:
-    description: Tag name or refs/tags/... for tag and manual tag deploys
-    required: false
-    default: ""
-  same-run-proof:
-    description: "true when this workflow's preceding jobs are the CI proof (same-run deploy)"
-    required: false
-    default: "false"
   require-fresh-main:
-    description: "true to require a run-id continuous deploy SHA to equal the current expected-branch tip"
+    description: "true to require a default-branch CI SHA to equal the current branch tip (skipped for tag CI)"
     required: false
     default: "true"
   package-version-match:
-    description: "true to require a vX.Y.Z tag to match package.json version at the proven SHA"
+    description: "true to require a vX.Y.Z source-ref to match package.json version at the proven SHA"
     required: false
     default: "false"
   package-json-path:
     description: Repository-relative package.json path used when package-version-match is true
     required: false
     default: package.json
-  caller-event-name:
-    description: Optional caller github.event_name; pull_request and other untrusted events fail closed
-    required: false
-    default: ""
 
 outputs:
-  target-sha:
+  sha:
     description: Proven 40-character commit SHA
-    value: ${{ steps.resolve.outputs.target-sha }}
-  source-run-id:
-    description: Proven or same-run Actions run ID
-    value: ${{ steps.resolve.outputs.source-run-id }}
-  event-type:
-    description: Proof path used (run, tag, or same-run)
-    value: ${{ steps.resolve.outputs.event-type }}
-  workflow-path:
-    description: Proven CI workflow path
-    value: ${{ steps.resolve.outputs.workflow-path }}
-  head-branch:
-    description: Proven head branch, empty for same-run
-    value: ${{ steps.resolve.outputs.head-branch }}
+    value: ${{ steps.resolve.outputs.sha }}
+  run-id:
+    description: Proven Actions run ID
+    value: ${{ steps.resolve.outputs.run-id }}
 
 runs:
   using: composite
@@ -76,16 +53,13 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
-        RELEASE_EXPECTED_WORKFLOW_PATH: ${{ inputs.expected-workflow-path }}
-        RELEASE_EXPECTED_WORKFLOW_NAME: ${{ inputs.expected-workflow-name }}
+        RELEASE_WORKFLOW_PATH: ${{ inputs.workflow-path }}
+        RELEASE_WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        RELEASE_BRANCH: ${{ inputs.branch }}
+        RELEASE_SOURCE_REF: ${{ inputs.source-ref }}
+        RELEASE_CI_RUN_ID: ${{ inputs.ci-run-id }}
         RELEASE_ALLOWED_SOURCE_EVENTS: ${{ inputs.allowed-source-events }}
-        RELEASE_EXPECTED_BRANCH: ${{ inputs.expected-branch }}
-        RELEASE_SOURCE_RUN_ID: ${{ inputs.source-run-id }}
-        RELEASE_SOURCE_SHA: ${{ inputs.source-sha }}
-        RELEASE_TAG: ${{ inputs.tag }}
-        RELEASE_SAME_RUN_PROOF: ${{ inputs.same-run-proof }}
         RELEASE_REQUIRE_FRESH_MAIN: ${{ inputs.require-fresh-main }}
         RELEASE_PACKAGE_VERSION_MATCH: ${{ inputs.package-version-match }}
         RELEASE_PACKAGE_JSON_PATH: ${{ inputs.package-json-path }}
-        RELEASE_CALLER_EVENT_NAME: ${{ inputs.caller-event-name }}
       run: node "$GITHUB_ACTION_PATH/resolve.mjs"

@@ -6,19 +6,19 @@ on:
       environment:
         type: string
         default: production
-      ci-workflow:
+      expected-workflow-path:
         type: string
         default: .github/workflows/ci.yml
-      ci-workflow-name:
+      expected-workflow-name:
         type: string
         default: CI
-      branch:
+      expected-branch:
         type: string
         default: main
       tag:
         type: string
         default: ''
-      ci-run-id:
+      source-run-id:
         type: string
         default: ''
       images:
@@ -58,8 +58,10 @@ on:
         description: Additional Docker build arguments supplied by the caller
         required: false
     outputs:
-      source-sha:
+      target-sha:
         value: ${{ jobs.source.outputs.sha }}
+      source-run-id:
+        value: ${{ jobs.source.outputs.run-id }}
       release-images:
         value: ${{ jobs.deploy.outputs.release-images }}
 
@@ -84,11 +86,11 @@ jobs:
       - id: source
         uses: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
         with:
-          expected-workflow-path: ${{ inputs.ci-workflow }}
-          expected-workflow-name: ${{ inputs.ci-workflow-name }}
-          expected-branch: ${{ inputs.branch }}
+          expected-workflow-path: ${{ inputs.expected-workflow-path }}
+          expected-workflow-name: ${{ inputs.expected-workflow-name }}
+          expected-branch: ${{ inputs.expected-branch }}
           tag: ${{ inputs.tag }}
-          source-run-id: ${{ inputs.ci-run-id }}
+          source-run-id: ${{ inputs.source-run-id }}
           github-token: ${{ github.token }}
       - id: plan
         uses: nocoo/base-ci/.github/actions/docker-manifest@10029d24ee49eb8c27f2807ee9b777570a7447de
@@ -200,9 +202,9 @@ jobs:
       - name: Recheck proven source before deployment
         uses: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
         with:
-          expected-workflow-path: ${{ inputs.ci-workflow }}
-          expected-workflow-name: ${{ inputs.ci-workflow-name }}
-          expected-branch: ${{ inputs.branch }}
+          expected-workflow-path: ${{ inputs.expected-workflow-path }}
+          expected-workflow-name: ${{ inputs.expected-workflow-name }}
+          expected-branch: ${{ inputs.expected-branch }}
           tag: ${{ inputs.tag }}
           source-run-id: ${{ needs.source.outputs.run-id }}
           source-sha: ${{ needs.source.outputs.sha }}

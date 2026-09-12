@@ -133,6 +133,12 @@ jobs:
           install-policy: ${{ inputs.install-policy }}
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@908d392767f22fc305256ac3fef653ee003173e0
+        with:
+          env-json: ${{ inputs.env-json }}
+          secret-env-json: ${{ secrets.test-env-json }}
+
       - name: Install Playwright browsers
         if: inputs.browser != ''
         shell: bash
@@ -157,12 +163,6 @@ jobs:
             npx playwright install --with-deps "$IN_BROWSER"
           fi
           popd > /dev/null
-
-      - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@908d392767f22fc305256ac3fef653ee003173e0
-        with:
-          env-json: ${{ inputs.env-json }}
-          secret-env-json: ${{ secrets.test-env-json }}
 
       - name: Pre-command
         if: inputs.pre-command != ''

@@ -93,7 +93,7 @@ jobs:
 
       - name: Setup JS and dependencies (if security-command requires runtime)
         if: inputs.package-manager != 'none'
-        uses: nocoo/base-ci/.github/actions/setup-js@8f984a8824a79407fc8953dfa4533cd0e75b9988
+        uses: nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}

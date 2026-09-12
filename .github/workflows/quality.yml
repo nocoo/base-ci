@@ -165,6 +165,9 @@ on:
         default: ""
 
       # Coverage and Artifacts
+      coverage-artifact-name:
+        type: string
+        default: coverage-report
       coverage-path:
         description: "Path to coverage output directory (empty = skip upload)"
         type: string
@@ -218,7 +221,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@8f984a8824a79407fc8953dfa4533cd0e75b9988
+        uses: nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -227,26 +230,10 @@ jobs:
           install-policy: ${{ inputs.install-policy }}
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
-      - name: Configure test environment and CI flag
-        shell: bash
-        env:
-          IN_ENV_JSON: ${{ inputs.env-json }}
-        run: |
-          set -euo pipefail
-          echo "CI=true" >> "$GITHUB_ENV"
-          if [ -n "$IN_ENV_JSON" ] && [ "$IN_ENV_JSON" != "{}" ]; then
-            python3 -c '
-          import os, sys, json
-          data = json.loads(os.environ.get("IN_ENV_JSON", "{}"))
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-              for k, v in data.items():
-                  if not isinstance(k, str) or not k.isidentifier():
-                      sys.stderr.write(f"Invalid env var name: {k}\n")
-                      sys.exit(1)
-                  delim = "EOF_" + os.urandom(8).hex()
-                  f.write(f"{k}<<{delim}\n{v}\n{delim}\n")
-          '
-          fi
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@908d392767f22fc305256ac3fef653ee003173e0
+        with:
+          env-json: ${{ inputs.env-json }}
 
       - name: Validate disabled checks explanations
         shell: bash
@@ -376,7 +363,7 @@ jobs:
         if: inputs.unit && inputs.coverage-path != '' && !cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-report
+          name: ${{ inputs.coverage-artifact-name }}
           path: ${{ inputs.coverage-path }}
           retention-days: 7
           if-no-files-found: error
@@ -427,7 +414,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@8f984a8824a79407fc8953dfa4533cd0e75b9988
+        uses: nocoo/base-ci/.github/actions/setup-js@1d6d6b1261661935fe2f1b385dcf822f0bf0a40a
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -436,26 +423,10 @@ jobs:
           install-policy: ${{ inputs.install-policy }}
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
-      - name: Configure build environment and CI flag
-        shell: bash
-        env:
-          IN_ENV_JSON: ${{ inputs.env-json }}
-        run: |
-          set -euo pipefail
-          echo "CI=true" >> "$GITHUB_ENV"
-          if [ -n "$IN_ENV_JSON" ] && [ "$IN_ENV_JSON" != "{}" ]; then
-            python3 -c '
-          import os, sys, json
-          data = json.loads(os.environ.get("IN_ENV_JSON", "{}"))
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-              for k, v in data.items():
-                  if not isinstance(k, str) or not k.isidentifier():
-                      sys.stderr.write(f"Invalid env var name: {k}\n")
-                      sys.exit(1)
-                  delim = "EOF_" + os.urandom(8).hex()
-                  f.write(f"{k}<<{delim}\n{v}\n{delim}\n")
-          '
-          fi
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@908d392767f22fc305256ac3fef653ee003173e0
+        with:
+          env-json: ${{ inputs.env-json }}
 
       - name: Prepare environment
         if: inputs.prepare-command != ''

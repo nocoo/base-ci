@@ -2,7 +2,7 @@
 
 Reusable GitHub Actions for quality checks, native jobs, security and verified releases.
 Profile: docs-config, with executable Python, JavaScript and shell helpers.
-Direction: [README.md](README.md). Frameworks must not rewrite this file.
+Human overview: [README.md](README.md). Frameworks must not rewrite this file. Maintain this root `AGENTS.md` as the only project handbook; do not create a `CLAUDE.md` alias, copy or import.
 
 ## Sources of Truth
 
@@ -56,19 +56,18 @@ Package-manager/lifecycle and SSH smoke suites run in disposable GitHub runners;
 
 ## Verification
 
-6DQ = L1/L2/L3 + G1/G2 + D1. Status is `enforced`, `planned`, `manual`, or `N/A`; gaps describe current implementation, not a weaker required bar.
+6DQ = L1/L2/L3 + G2 + D1; the former G1 dimension was merged into L1 on 2026-09-21. Status is `enforced`, `planned`, `manual`, or `N/A`; gaps describe current implementation, not a weaker required bar.
 
 | Dimension | Required proof | Status | Current enforcement / gap |
 |---|---|---|---|
-| L1 helpers | Statements, branches, functions and lines each ≥95%; no skipped/focused tests | planned | Node and Python behavioral tests run in `self-test.yml` / `self-test-release.yml`; no four-metric coverage threshold exists |
+| L1 helpers (incl. former G1 static) | Statements, branches, functions and lines each ≥95%; no skipped/focused tests; check-only lint/types with zero errors and warnings in every helper lane | planned | Node and Python behavioral tests run in `self-test.yml` / `self-test-release.yml`; no four-metric coverage threshold exists. CI enforces actionlint/YAML/contracts, with shellcheck/pyflakes disabled and no complete helper static gate; no installed pre-commit rejection, timing or index-snapshot proof exists |
 | L2 API | Real HTTP over every owned endpoint/method | N/A | This provider exposes no application HTTP API; helper integration is exercised by reusable-workflow fixtures |
 | L3 workflows | Real install, environment, quality, scanner and SSH workflows | enforced | `self-test-quality.yml`, `self-test.yml`, `self-test-ssh-deploy.yml`; actual consumer deployments require separate evidence |
-| G1 static | Check-only lint/types, zero errors and warnings in every helper lane | planned | CI enforces actionlint/YAML/contracts; actionlint disables shellcheck/pyflakes and no complete helper static gate exists |
 | G2 security | Dependency and secret scans; missing scanner fails | planned | `self-test-quality.yml` verifies scanners on `security-basic`; provider-wide secrets and every fixture lock are not a complete enforced gate |
 | D1 isolation | Disposable test state, guarded cleanup, no production/daily-dev writes | planned | CI uses isolated runners and `RUNNER_TEMP` markers; complete guards for locally invoked fixtures are not enforced |
 | Docs | Public input/output and adapter instructions match behavior | manual | Review README and action/workflow contracts |
 
-No project commit/push hooks are configured. Target pre-commit is G1+L1 on the index snapshot (<30s); pre-push is applicable integration+G2 on stdin push refs (<3min). Those local gates remain planned. Hooks must be check-only; never use `--no-verify` on commits or branch pushes.
+No project commit/push hooks are configured. Target pre-commit is unified L1 (types, check-only lint, coverage) on the index snapshot (<30s); pre-push is applicable integration+G2 on stdin push refs (<3min). Those local gates remain planned. Hooks must be check-only; never use `--no-verify` on commits or branch pushes.
 
 ## Operations / Release
 
@@ -78,4 +77,4 @@ Project operators own actual deployment approval, production health checks and p
 
 ## Retrospective
 
-Accident narratives stay in [Retrospective.md](Retrospective.md). Keep only recurring project rules here; cross-project lessons belong in global rules/nmem, and deterministic checks belong in tests or hooks.
+Accident narratives stay in [Retrospective.md](Retrospective.md). Keep only recurring project rules here; cross-project lessons belong to global rules/nmem, and deterministic checks belong in tests or hooks.

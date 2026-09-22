@@ -72,7 +72,7 @@ GitHub self-tests exercise real installation, lifecycle policies, scanners, SSH 
 - [Complete workflow integration guide](workflows.md).
 - [Workflow input definitions](../.github/workflows/).
 - [SSH deploy action](../.github/actions/ssh-deploy/README.md).
-- [Maintenance guide](../CLAUDE.md).
+- [Maintenance guide](../AGENTS.md).
 
 ## License
 

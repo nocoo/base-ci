@@ -72,7 +72,7 @@ GitHub 自测覆盖真实依赖安装、生命周期策略、扫描器、SSH 和
 - [完整工作流集成说明](docs/workflows.md)。
 - [工作流输入定义](.github/workflows/)。
 - [SSH 部署 action](.github/actions/ssh-deploy/README.md)。
-- [维护说明](CLAUDE.md)。
+- [维护说明](AGENTS.md)。
 
 ## 许可证
 

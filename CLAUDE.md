@@ -15,7 +15,6 @@ This file is the **contract**. Workflows and self-test CI are **enforcement**. I
 | Version | git tags `v2026`, `v2026.N` (latest `v2026.6`) |
 | Enforcement | `.github/workflows/self-test.yml`, `self-test-ssh-deploy.yml` |
 | Machine rules | global `AGENTS.md`, `rules/git-commit.md` |
-| Accidents | [Retrospective.md](Retrospective.md) |
 | Env files | omit |
 
 ## Project Invariants
@@ -64,14 +63,3 @@ docs-config: omit product L1/L2/L3/G2/build/release rows. This repo’s bar is s
 | Release | annotated tag `v2026.N`; move `v2026` only when intended | manual | operator `git tag` |
 
 No local husky. `--no-verify` still forbidden if hooks appear later.
-
-## Retrospective
-
-| Kind | Where |
-|---|---|
-| Accident narrative | [Retrospective.md](Retrospective.md) |
-| Recurring project rule | one line here (cap ~10) |
-| Cross-project | nmem / global rules |
-| Checkable rule | workflow assert |
-
-- (none yet)

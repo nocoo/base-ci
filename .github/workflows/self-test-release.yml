@@ -54,7 +54,10 @@ jobs:
           assert secrets['CLOUDFLARE_API_TOKEN']['required'] is False
           assert secrets['CLOUDFLARE_ACCOUNT_ID']['required'] is False
           inputs = on['workflow_call']['inputs']
-          assert inputs['wrangler-version']['required'] is True
+          assert inputs['deploy-cli']['default'] == 'wrangler'
+          assert inputs['wrangler-version']['default'] == ''
+          assert inputs['cf-version']['default'] == ''
+          assert inputs['deploy-command']['default'] == ''
           assert inputs['require-fresh-main']['default'] is True
           assert inputs['install-policy']['default'] == 'blocked'
           assert 'deploy-script' in inputs

@@ -12,7 +12,7 @@ Consumers keep their triggers, project commands, deployment environment and a fe
 | [test-job.yml](../.github/workflows/test-job.yml) | One command with shared setup, a caller-owned runner matrix, Python or Node without JS dependencies, and optional browser/report support |
 | [security.yml](../.github/workflows/security.yml) | Multiple lockfiles, directory or full-history secret scanning, or an existing project security gate |
 | [workflow-lint.yml](../.github/workflows/workflow-lint.yml) | Actionlint, immutable base-ci references, optional required release template and yamllint |
-| [deploy-worker.yml](../.github/workflows/deploy-worker.yml) | Rebuild a proven CI commit, optionally migrate D1, deploy locked Wrangler and verify production |
+| [deploy-worker.yml](../.github/workflows/deploy-worker.yml) | Rebuild a proven CI commit, optionally migrate D1, deploy locked Wrangler or cf and verify production |
 | [deploy-docker.yml](../.github/workflows/deploy-docker.yml) | Build one or more GHCR images from a proven CI commit and deploy their exact digests through Docker Compose over SSH |
 
 The workflow files define the complete input and output contracts. `bun-quality.yml` is the older string-switch interface; new migrations use `quality.yml`. Historical behavior remains available through immutable commits and the `v2026.1`–`v2026.6` tags. The old moving `v2026` alias is not an upgrade policy.
@@ -146,7 +146,30 @@ jobs:
     secrets: inherit
 ```
 
-`wrangler-version` must equal the frozen local dependency's actual version. `deploy-command` is a Wrangler subcommand. `deploy-script` instead invokes an existing complete project release command, such as GeekHub's production guard, migrations, build and deployment. A deployment holds a non-cancelling lock for its production environment.
+`deploy-cli` defaults to `wrangler`; existing callers keep their named D1 databases, `--remote`, optional `wrangler-config` / `wrangler-working-directory`, and default `deploy` command. `wrangler-version` must equal the frozen local dependency's actual version when shared steps use Wrangler.
+
+For a cf-only project, replace the Wrangler inputs with:
+
+```yaml
+with:
+  source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
+  package-manager: npm
+  node-version: '22.23.2'
+  deploy-cli: cf
+  cf-version: '1.0.0-beta.12'
+  build-command: npm run build
+  d1-migrations: true
+  d1-databases: 00000000-1234-5678-abcd-000000000001
+  verify-command: curl --fail --silent --show-error https://example.com/api/live
+```
+
+Replace the example UUID with the production database ID. Pin `cf` in the project's dependency manifest and lockfile and commit `cloudflare.config.ts`. `cf-version` must exactly match the local binary, including prerelease suffixes. Shared cf steps never install, locate or invoke Wrangler. `working-directory` selects the cf project; Wrangler-specific path inputs are rejected for cf.
+
+The build command must generate `.cloudflare/output` from the proven checkout. The default cf deployment is `cf deploy --prebuilt --mode production`: it does not rebuild or run automatic configuration. Build and deploy modes must match. Set `deploy-command: deploy --prebuilt --mode staging` for a build explicitly created with staging mode; the GitHub `environment` name does not set the cf mode. See [cf in CI](https://developers.cloudflare.com/cf/ci/) and [prebuilt deployment](https://developers.cloudflare.com/cf/projects/#deploy-a-prebuilt-build).
+
+For cf, `d1-databases` accepts database UUIDs, not names or bindings, and migrations are remote without a `--remote` flag. The default migration directory is `./migrations`. Use `d1-command: d1 migrations apply UUID --dir drizzle --pattern */migration.sql --table custom` for a custom layout; it replaces the database loop and is passed to the selected local CLI. `deploy-command` and `d1-command` are whitespace-separated CLI arguments, not shell scripts; globs remain literal. Use a project script for shell quoting or compound commands. cf does not read Wrangler migration settings; see the [migration reference](https://developers.cloudflare.com/cf/wrangler/reference/).
+
+`deploy-script` invokes an existing complete project release command instead of the shared deploy command. With shared `d1-migrations: false` (the default), neither CLI version nor binary is required or checked; the script owns its toolchain. With shared migrations enabled, the selected CLI and its exact version are still required for migrations, followed by the project script. A deployment holds a non-cancelling lock for its production environment.
 
 GitHub environment names are exact and case-sensitive. The called deployment job selects the environment and reads its `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. CI jobs do not need production deployment credentials.
 

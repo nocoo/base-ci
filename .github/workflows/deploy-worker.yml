@@ -77,10 +77,18 @@ on:
         description: Optional build command after install (empty skips)
         type: string
         default: ""
-      wrangler-version:
-        description: Exact locked Wrangler version that must match the local binary
+      deploy-cli:
+        description: Project-local deployment CLI (wrangler or cf)
         type: string
-        required: true
+        default: "wrangler"
+      wrangler-version:
+        description: Exact local Wrangler version; required when shared steps use Wrangler
+        type: string
+        default: ""
+      cf-version:
+        description: Exact local cf version; required when shared steps use cf
+        type: string
+        default: ""
       wrangler-config:
         description: Optional --config path relative to wrangler-working-directory
         type: string
@@ -90,11 +98,11 @@ on:
         type: string
         default: ""
       deploy-command:
-        description: Wrangler subcommand after the local binary (default deploy)
+        description: "CLI subcommand; empty uses deploy for Wrangler, deploy --prebuilt --mode production for cf"
         type: string
-        default: "deploy"
+        default: ""
       deploy-script:
-        description: Optional project deploy command (e.g. bun run deploy); skips Wrangler subcommand
+        description: Project deploy command; skips CLI validation unless shared D1 migrations are enabled
         type: string
         default: ""
       d1-migrations:
@@ -102,11 +110,11 @@ on:
         type: boolean
         default: false
       d1-databases:
-        description: Newline or comma separated D1 database names
+        description: Newline or comma separated D1 names for Wrangler, database UUIDs for cf
         type: string
         default: ""
       d1-command:
-        description: Optional full Wrangler D1 subcommand; overrides d1-databases looping
+        description: Full selected CLI D1 subcommand; overrides d1-databases (cf accepts --dir, --pattern, --table)
         type: string
         default: ""
 
@@ -171,7 +179,12 @@ jobs:
           PACKAGE_MANAGER: ${{ inputs.package-manager }}
           RUNTIME_VERSION: ${{ inputs.runtime-version }}
           NODE_VERSION: ${{ inputs.node-version }}
+          DEPLOY_CLI: ${{ inputs.deploy-cli }}
+          DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
           WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+          CF_VERSION: ${{ inputs.cf-version }}
+          WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          WRANGLER_WORKING_DIRECTORY: ${{ inputs.wrangler-working-directory }}
           INSTALL_POLICY: ${{ inputs.install-policy }}
           D1_MIGRATIONS: ${{ inputs.d1-migrations }}
           D1_DATABASES: ${{ inputs.d1-databases }}
@@ -187,9 +200,22 @@ jobs:
             blocked|trusted|project) ;;
             *) echo "::error::install-policy must be blocked, trusted, or project"; exit 1 ;;
           esac
-          if [[ ! "$WRANGLER_VERSION" =~ $exact ]]; then
-            echo "::error::wrangler-version must be an exact version, not latest"
-            exit 1
+          case "$DEPLOY_CLI" in
+            wrangler) version=$WRANGLER_VERSION ;;
+            cf)
+              version=$CF_VERSION
+              if [ -n "$WRANGLER_CONFIG" ] || [ -n "$WRANGLER_WORKING_DIRECTORY" ]; then
+                echo "::error::cf uses working-directory and cloudflare.config.ts, not Wrangler path inputs"
+                exit 1
+              fi
+              ;;
+            *) echo "::error::deploy-cli must be wrangler or cf"; exit 1 ;;
+          esac
+          if [ -z "$DEPLOY_SCRIPT" ] || [ "$D1_MIGRATIONS" = "true" ]; then
+            if [[ ! "$version" =~ $exact ]]; then
+              echo "::error::$DEPLOY_CLI-version must be an exact version, not latest"
+              exit 1
+            fi
           fi
           if [ "$PACKAGE_MANAGER" = "bun" ] || [ "$PACKAGE_MANAGER" = "pnpm" ]; then
             if [[ ! "$RUNTIME_VERSION" =~ $exact ]]; then
@@ -295,17 +321,12 @@ jobs:
           extra-install-dirs: ${{ steps.paths.outputs.extra-install-dirs }}
           install-policy: ${{ inputs.install-policy }}
 
-      - name: Build
-        if: inputs.build-command != ''
-        working-directory: ${{ steps.paths.outputs.working-directory }}
+      - name: Locate locked deployment CLI
+        if: inputs.deploy-script == '' || inputs.d1-migrations
+        id: cli
         env:
-          BUILD_COMMAND: ${{ inputs.build-command }}
-        run: bash -euo pipefail -c "$BUILD_COMMAND"
-
-      - name: Locate locked Wrangler
-        id: wrangler
-        env:
-          WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+          DEPLOY_CLI: ${{ inputs.deploy-cli }}
+          CLI_VERSION: ${{ inputs.deploy-cli == 'cf' && inputs.cf-version || inputs.wrangler-version }}
           WRANGLER_WD: ${{ steps.paths.outputs.wrangler-working-directory }}
           WORKDIR: ${{ steps.paths.outputs.working-directory }}
         run: |
@@ -313,8 +334,9 @@ jobs:
           python3 - <<'PY'
           import os, re, sys
 
+          cli = os.environ["DEPLOY_CLI"]
           def abs_bin(root):
-              return os.path.abspath(os.path.join(root, "node_modules", ".bin", "wrangler"))
+              return os.path.abspath(os.path.join(root, "node_modules", ".bin", cli))
 
           workspace = os.environ["GITHUB_WORKSPACE"]
           candidates = []
@@ -324,20 +346,27 @@ jobs:
               candidates.append(abs_bin(root))
           bin_path = next((path for path in candidates if os.path.isfile(path) and os.access(path, os.X_OK)), "")
           if not bin_path:
-              print("::error::Locked local wrangler binary not found after frozen install", file=sys.stderr)
+              print(f"::error::Locked local {cli} binary not found after frozen install", file=sys.stderr)
               sys.exit(1)
           import subprocess
           reported = subprocess.check_output([bin_path, "--version"], text=True, stderr=subprocess.STDOUT).strip()
-          expected = os.environ["WRANGLER_VERSION"].lstrip("v")
+          expected = os.environ["CLI_VERSION"]
           match = re.search(r"(\d+\.\d+\.\d+(?:[.-][A-Za-z0-9.-]+)?)", reported)
           parsed = match.group(1) if match else ""
           if parsed != expected:
-              print(f"::error::Local wrangler '{reported}' parsed '{parsed}', expected {expected}", file=sys.stderr)
+              print(f"::error::Local {cli} '{reported}' parsed '{parsed}', expected {expected}", file=sys.stderr)
               sys.exit(1)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"bin={bin_path}\n")
           print(f"Using {bin_path} ({parsed})")
           PY
+
+      - name: Build
+        if: inputs.build-command != ''
+        working-directory: ${{ steps.paths.outputs.working-directory }}
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        run: bash -euo pipefail -c "$BUILD_COMMAND"
 
       - name: Require Cloudflare credentials
         env:
@@ -381,28 +410,38 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WRANGLER_BIN: ${{ steps.wrangler.outputs.bin }}
+          DEPLOY_CLI: ${{ inputs.deploy-cli }}
+          CLI_BIN: ${{ steps.cli.outputs.bin }}
           WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
           D1_COMMAND: ${{ inputs.d1-command }}
           D1_DATABASES: ${{ inputs.d1-databases }}
         run: |
           set -euo pipefail
+          set -f
           config=()
           if [ -n "$WRANGLER_CONFIG" ]; then
             config+=(--config "$WRANGLER_CONFIG")
           fi
           if [ -n "$D1_COMMAND" ]; then
-            "$WRANGLER_BIN" $D1_COMMAND "${config[@]}"
+            "$CLI_BIN" $D1_COMMAND "${config[@]}"
             exit 0
           fi
           while IFS= read -r db || [ -n "${db:-}" ]; do
             db=${db//$'\r'/}
             [ -n "$db" ] || continue
-            if [[ ! "$db" =~ ^[A-Za-z0-9_-]+$ ]]; then
-              echo "::error::Invalid D1 database name"
-              exit 1
+            if [ "$DEPLOY_CLI" = "cf" ]; then
+              if [[ ! "$db" =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$ ]]; then
+                echo "::error::cf D1 migrations require database UUIDs, not names or bindings"
+                exit 1
+              fi
+              "$CLI_BIN" d1 migrations apply "$db"
+            else
+              if [[ ! "$db" =~ ^[A-Za-z0-9_-]+$ ]]; then
+                echo "::error::Invalid D1 database name"
+                exit 1
+              fi
+              "$CLI_BIN" d1 migrations apply "$db" --remote "${config[@]}"
             fi
-            "$WRANGLER_BIN" d1 migrations apply "$db" --remote "${config[@]}"
           done < <(printf '%s\n' "$D1_DATABASES" | tr ',' '\n')
 
       - name: Run project deploy script
@@ -420,16 +459,25 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WRANGLER_BIN: ${{ steps.wrangler.outputs.bin }}
+          DEPLOY_CLI: ${{ inputs.deploy-cli }}
+          CLI_BIN: ${{ steps.cli.outputs.bin }}
           WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
           DEPLOY_COMMAND: ${{ inputs.deploy-command }}
         run: |
           set -euo pipefail
+          set -f
           config=()
           if [ -n "$WRANGLER_CONFIG" ]; then
             config+=(--config "$WRANGLER_CONFIG")
           fi
-          "$WRANGLER_BIN" $DEPLOY_COMMAND "${config[@]}"
+          if [ -z "$DEPLOY_COMMAND" ]; then
+            if [ "$DEPLOY_CLI" = "cf" ]; then
+              DEPLOY_COMMAND='deploy --prebuilt --mode production'
+            else
+              DEPLOY_COMMAND=deploy
+            fi
+          fi
+          "$CLI_BIN" $DEPLOY_COMMAND "${config[@]}"
 
       - name: Verify deployment
         if: inputs.verify-command != ''

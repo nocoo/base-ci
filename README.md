@@ -272,40 +272,7 @@ If your dependency graph genuinely has **no** native packages (or you have vendo
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Parallel Execution                        │
-├─────────────────┬─────────────────┬─────────────────────────┤
-│ quality-gate    │ api-e2e (L2)    │ browser-e2e (L3)        │
-│ (L1+G1+G2)      │ (opt-in)        │ (opt-in)                │
-│                 │                 │                          │
-│ • Gitleaks      │ • Real HTTP     │ • Playwright            │
-│ • TypeScript    │ • Test DB/R2/KV │ • Test DB/R2/KV         │
-│ • ESLint        │                 │                          │
-│ • Unit tests    │                 │                          │
-│ • OSV-Scanner   │                 │                          │
-└─────────────────┴─────────────────┴─────────────────────────┘
-                            │
-                    ┌───────┴───────┐
-                    │ worker-tests  │
-                    │ (opt-in)      │
-                    │               │
-                    │ • Vitest      │
-                    └───────────────┘
-```
-
 All jobs run in **parallel** — no `needs` dependencies. This reduces CI time by ~50% compared to sequential execution.
-
-## Test Isolation
-
-For L2/L3 tests against Cloudflare resources, implement a 4-layer safety system:
-
-1. **Env override**: `D1_TEST_DATABASE_ID` → `CLOUDFLARE_D1_DATABASE_ID`
-2. **Inequality check**: `testDbId !== prodDbId`
-3. **Defensive guard**: Validation in DB helper functions
-4. **Marker table**: `_test_marker` table exists only in test DB
-
-This ensures tests **never** run against production resources.
 
 ## Versioning
 

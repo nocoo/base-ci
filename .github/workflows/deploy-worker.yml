@@ -330,7 +330,7 @@ jobs:
           (inputs.wrangler-version == '' || inputs.wrangler-version == 'lockfile') &&
           (inputs.deploy-script == '' || inputs.d1-migrations)
         id: locked-wrangler
-        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@PLACEHOLDER_SHA
+        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@05af4164cdbcb6266568c2be2bada570f7287dd7
         with:
           working-directory: ${{ steps.paths.outputs.working-directory }}
 

@@ -137,7 +137,7 @@ jobs:
     with:
       source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
       runtime-version: '1.4.2'
-      wrangler-version: '4.131.1'
+      wrangler-version: lockfile
       environment: Production
       build-command: bun run build
       d1-migrations: true
@@ -146,7 +146,7 @@ jobs:
     secrets: inherit
 ```
 
-`deploy-cli` defaults to `wrangler`; existing callers keep their named D1 databases, `--remote`, optional `wrangler-config` / `wrangler-working-directory`, and default `deploy` command. `wrangler-version` must equal the frozen local dependency's actual version when shared steps use Wrangler.
+`deploy-cli` defaults to `wrangler`; existing callers keep their named D1 databases, `--remote`, optional `wrangler-config` / `wrangler-working-directory`, and default `deploy` command. `wrangler-version` defaults to `lockfile`, which reads the exact version from `bun.lock`, `package-lock.json`, `pnpm-lock.yaml`, and/or `yarn.lock` under `working-directory` and requires every present lockfile to agree. Omit the input or set `wrangler-version: lockfile` to stop hand-pinning Wrangler on every bump. An explicit semver pin remains supported and unchanged when shared steps use Wrangler.
 
 For a cf-only project, replace the Wrangler inputs with:
 

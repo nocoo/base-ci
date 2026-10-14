@@ -35,6 +35,7 @@ This file is the contract; hooks, CI and configuration enforce it. Raise weaker 
 | `.github/workflows/security.yml`, `workflow-lint.yml` | Verified scanners, lockfiles, YAML and immutable pins |
 | `.github/workflows/deploy-worker.yml`, `deploy-docker.yml` | Proven-source deployment interfaces |
 | `.github/actions/setup-js/`, `configure-env/` | Python runtime/install and environment validation |
+| `.github/actions/resolve-locked-wrangler/` | Locked Wrangler version resolution for deploy-worker |
 | `.github/actions/release-source/`, `docker-manifest/` | JavaScript release proof and manifest validation |
 | `.github/actions/ssh-deploy/` | SSH transport, dedicated README and runner smoke test |
 | `.github/fixtures/` | Frozen Bun/npm/pnpm and native-helper fixtures |

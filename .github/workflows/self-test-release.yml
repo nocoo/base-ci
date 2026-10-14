@@ -24,7 +24,9 @@ jobs:
           node-version: "22.23.2"
 
       - name: Helper behavioral tests
-        run: node --test .github/actions/release-source/resolve.test.mjs
+        run: |
+          node --test .github/actions/release-source/resolve.test.mjs
+          python3 -m unittest discover -s .github/actions/resolve-locked-wrangler -p 'test_*.py'
 
       - name: Workflow contract tests
         run: node --test .github/actions/release-source/workflow-contract.test.mjs
@@ -55,7 +57,7 @@ jobs:
           assert secrets['CLOUDFLARE_ACCOUNT_ID']['required'] is False
           inputs = on['workflow_call']['inputs']
           assert inputs['deploy-cli']['default'] == 'wrangler'
-          assert inputs['wrangler-version']['default'] == ''
+          assert inputs['wrangler-version']['default'] == 'lockfile'
           assert inputs['cf-version']['default'] == ''
           assert inputs['deploy-command']['default'] == ''
           assert inputs['require-fresh-main']['default'] is True

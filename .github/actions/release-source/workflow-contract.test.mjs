@@ -33,6 +33,8 @@ test('deploy-worker pins verified Actions SHAs and validates the selected local 
   assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
   assert.match(workflow, /nocoo\/base-ci\/\.github\/actions\/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4/);
   assert.match(workflow, /deploy-cli:[\s\S]*default: "wrangler"/);
+  assert.match(workflow, /wrangler-version:[\s\S]*default: "lockfile"/);
+  assert.match(workflow, /resolve-locked-wrangler/);
   assert.match(workflow, /if: inputs.deploy-script == '' \|\| inputs.d1-migrations/);
   assert.match(workflow, /parsed != expected/);
   assert.match(workflow, /os.path.abspath/);
@@ -76,8 +78,18 @@ function fixture(t, overrides = {}) {
     assert.equal(result.status, expected, `${name}: ${result.stdout}\n${result.stderr}`);
     return result;
   }
+  function resolveWranglerFromLockfiles() {
+    if (env.DEPLOY_CLI !== 'wrangler') return;
+    if (env.WRANGLER_VERSION && env.WRANGLER_VERSION !== 'lockfile') return;
+    if (env.DEPLOY_SCRIPT && env.D1_MIGRATIONS !== 'true') return;
+    const script = join(dirname(fileURLToPath(import.meta.url)), '../resolve-locked-wrangler/resolve_locked_wrangler.py');
+    const result = spawnSync('python3', [script], { cwd: root, env: { ...env, WORKING_DIRECTORY: env.WORKDIR || '.' }, encoding: 'utf8' });
+    assert.equal(result.status, 0, `resolve locked wrangler: ${result.stdout}\n${result.stderr}`);
+    env.RESOLVED_WRANGLER_VERSION = readFileSync(env.GITHUB_OUTPUT, 'utf8').match(/wrangler-version=(.+)/)?.[1] ?? '';
+  }
   function locate() {
-    env.CLI_VERSION = env.DEPLOY_CLI === 'cf' ? env.CF_VERSION : env.WRANGLER_VERSION;
+    resolveWranglerFromLockfiles();
+    env.CLI_VERSION = env.DEPLOY_CLI === 'cf' ? env.CF_VERSION : (env.RESOLVED_WRANGLER_VERSION || env.WRANGLER_VERSION);
     run('Locate locked deployment CLI');
     env.CLI_BIN = readFileSync(env.GITHUB_OUTPUT, 'utf8').trim().split('bin=').at(-1);
   }
@@ -116,12 +128,45 @@ test('cf banner prerelease version, UUID migrations and production prebuilt depl
   assert.equal(f.calls().length, 3);
 });
 
+test('lockfile mode reads agreeing bun and npm lockfiles before locating Wrangler', t => {
+  const f = fixture(t, { WRANGLER_VERSION: 'lockfile' });
+  writeFileSync(join(f.root, 'bun.lock'), '"wrangler": ["wrangler@4.149.0", {}]');
+  writeFileSync(join(f.root, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/wrangler': { version: '4.149.0' } } }));
+  f.binary('wrangler', '4.149.0');
+  f.run('Reject floating versions and unknown policies');
+  f.locate();
+  f.run('Deploy Worker');
+  assert.deepEqual(f.calls(), [['wrangler', '--version'], ['wrangler', 'deploy']]);
+});
+
+test('lockfile mode fails when bun and npm disagree', t => {
+  const f = fixture(t, { WRANGLER_VERSION: 'lockfile' });
+  writeFileSync(join(f.root, 'bun.lock'), '"wrangler": ["wrangler@4.149.0", {}]');
+  writeFileSync(join(f.root, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/wrangler': { version: '4.131.1' } } }));
+  f.run('Reject floating versions and unknown policies');
+  resolveWranglerFromLockfiles(f);
+  function resolveWranglerFromLockfiles(fixture) {
+    const script = join(dirname(fileURLToPath(import.meta.url)), '../resolve-locked-wrangler/resolve_locked_wrangler.py');
+    const result = spawnSync('python3', [script], {
+      cwd: fixture.root,
+      env: { ...fixture.env, WORKING_DIRECTORY: fixture.env.WORKDIR || '.' },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /mismatch/);
+  }
+});
+
 test('CLI version validation fails closed for missing, floating, mismatched or global-only binaries', t => {
   for (const cli of ['cf', 'wrangler']) {
     const f = fixture(t, { DEPLOY_CLI: cli });
     const key = cli === 'cf' ? 'CF_VERSION' : 'WRANGLER_VERSION';
-    for (const version of ['', 'latest', '^1.0.0', '1.0']) {
+    for (const version of ['latest', '^1.0.0', '1.0']) {
       f.env[key] = version;
+      f.run('Reject floating versions and unknown policies', 1);
+    }
+    if (cli === 'cf') {
+      f.env[key] = '';
       f.run('Reject floating versions and unknown policies', 1);
     }
     f.env[key] = f.env.CLI_VERSION = '1.0.0-beta.12';
@@ -153,7 +198,18 @@ test('script override without shared migrations requires neither CLI version nor
     assert.equal(readFileSync(join(f.root, 'script-ran'), 'utf8'), 'script');
     f.env.D1_MIGRATIONS = 'true';
     f.env.D1_DATABASES = 'app-db';
-    f.run('Reject floating versions and unknown policies', 1);
+    if (cli === 'cf') {
+      f.run('Reject floating versions and unknown policies', 1);
+      continue;
+    }
+    f.run('Reject floating versions and unknown policies');
+    const script = join(dirname(fileURLToPath(import.meta.url)), '../resolve-locked-wrangler/resolve_locked_wrangler.py');
+    const missing = spawnSync('python3', [script], {
+      cwd: f.root,
+      env: { ...f.env, WORKING_DIRECTORY: f.env.WORKDIR || '.' },
+      encoding: 'utf8',
+    });
+    assert.equal(missing.status, 1, missing.stderr);
   }
   assert.match(workflow, /name: Locate locked deployment CLI\n\s+if: inputs.deploy-script == '' \|\| inputs.d1-migrations/);
   assert.match(workflow, /name: Deploy Worker\n\s+if: inputs.deploy-script == ''/);
@@ -195,7 +251,7 @@ test('invalid CLI selection, cf Wrangler-only options and missing migration targ
 });
 
 test('proof, checkout, CLI validation and freshness precede production writes', () => {
-  const names = ['Resolve release source', 'Checkout proven SHA', 'Confirm checkout matches proven SHA', 'Setup JS and frozen install', 'Locate locked deployment CLI', 'Build', 'Require Cloudflare credentials', 'Recheck default-branch freshness', 'Apply D1 migrations', 'Run project deploy script', 'Deploy Worker', 'Verify deployment'];
+  const names = ['Resolve release source', 'Checkout proven SHA', 'Confirm checkout matches proven SHA', 'Normalize repository-relative paths', 'Resolve locked Wrangler version', 'Setup JS and frozen install', 'Locate locked deployment CLI', 'Build', 'Require Cloudflare credentials', 'Recheck default-branch freshness', 'Apply D1 migrations', 'Run project deploy script', 'Deploy Worker', 'Verify deployment'];
   const positions = names.map(name => workflow.indexOf(`      - name: ${name}\n`));
   assert.ok(positions.every(position => position >= 0));
   assert.deepEqual(positions, positions.toSorted((a, b) => a - b));
@@ -225,6 +281,7 @@ test('release-source exposes run/tag/manual inputs and target-sha/source-run-id 
 
 test('self-test-release runs helper tests and does not deploy', () => {
   assert.match(selfTest, /node --test \.github\/actions\/release-source\/resolve\.test\.mjs/);
+  assert.match(selfTest, /unittest discover -s \.github\/actions\/resolve-locked-wrangler/);
   assert.match(selfTest, /node --test \.github\/actions\/release-source\/workflow-contract\.test\.mjs/);
   assert.doesNotMatch(selfTest, /deploy-worker\.yml@/);
   assert.doesNotMatch(selfTest, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets/);

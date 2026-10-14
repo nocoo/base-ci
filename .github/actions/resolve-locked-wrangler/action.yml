@@ -1,0 +1,22 @@
+name: Resolve locked Wrangler version
+description: Read the exact wrangler version from bun.lock, package-lock.json, pnpm-lock.yaml, and/or yarn.lock
+
+inputs:
+  working-directory:
+    description: Directory relative to the repository root that contains lockfiles
+    required: false
+    default: "."
+
+outputs:
+  wrangler-version:
+    description: Exact wrangler version agreed by every present lockfile
+    value: ${{ steps.resolve.outputs.wrangler-version }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: python3 "${{ github.action_path }}/resolve_locked_wrangler.py"

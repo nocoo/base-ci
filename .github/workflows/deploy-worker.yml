@@ -82,9 +82,9 @@ on:
         type: string
         default: "wrangler"
       wrangler-version:
-        description: Exact local Wrangler version; required when shared steps use Wrangler
+        description: Exact local Wrangler version, or lockfile to read bun.lock / package-lock.json / pnpm-lock.yaml / yarn.lock (empty defaults to lockfile)
         type: string
-        default: ""
+        default: "lockfile"
       cf-version:
         description: Exact local cf version; required when shared steps use cf
         type: string
@@ -200,8 +200,15 @@ jobs:
             blocked|trusted|project) ;;
             *) echo "::error::install-policy must be blocked, trusted, or project"; exit 1 ;;
           esac
+          wrangler_from_lockfile=0
           case "$DEPLOY_CLI" in
-            wrangler) version=$WRANGLER_VERSION ;;
+            wrangler)
+              if [ -z "$WRANGLER_VERSION" ] || [ "$WRANGLER_VERSION" = "lockfile" ]; then
+                wrangler_from_lockfile=1
+              else
+                version=$WRANGLER_VERSION
+              fi
+              ;;
             cf)
               version=$CF_VERSION
               if [ -n "$WRANGLER_CONFIG" ] || [ -n "$WRANGLER_WORKING_DIRECTORY" ]; then
@@ -212,9 +219,15 @@ jobs:
             *) echo "::error::deploy-cli must be wrangler or cf"; exit 1 ;;
           esac
           if [ -z "$DEPLOY_SCRIPT" ] || [ "$D1_MIGRATIONS" = "true" ]; then
-            if [[ ! "$version" =~ $exact ]]; then
-              echo "::error::$DEPLOY_CLI-version must be an exact version, not latest"
-              exit 1
+            if [ "$wrangler_from_lockfile" -eq 0 ]; then
+              if [[ ! "$version" =~ $exact ]]; then
+                if [ "$DEPLOY_CLI" = "wrangler" ]; then
+                  echo "::error::wrangler-version must be an exact version, lockfile, or empty"
+                else
+                  echo "::error::cf-version must be an exact version, not latest"
+                fi
+                exit 1
+              fi
             fi
           fi
           if [ "$PACKAGE_MANAGER" = "bun" ] || [ "$PACKAGE_MANAGER" = "pnpm" ]; then
@@ -311,6 +324,16 @@ jobs:
               fh.write("EOF\n")
           PY
 
+      - name: Resolve locked Wrangler version
+        if: >-
+          inputs.deploy-cli == 'wrangler' &&
+          (inputs.wrangler-version == '' || inputs.wrangler-version == 'lockfile') &&
+          (inputs.deploy-script == '' || inputs.d1-migrations)
+        id: locked-wrangler
+        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@PLACEHOLDER_SHA
+        with:
+          working-directory: ${{ steps.paths.outputs.working-directory }}
+
       - name: Setup JS and frozen install
         uses: nocoo/base-ci/.github/actions/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4
         with:
@@ -326,7 +349,7 @@ jobs:
         id: cli
         env:
           DEPLOY_CLI: ${{ inputs.deploy-cli }}
-          CLI_VERSION: ${{ inputs.deploy-cli == 'cf' && inputs.cf-version || inputs.wrangler-version }}
+          CLI_VERSION: ${{ inputs.deploy-cli == 'cf' && inputs.cf-version || (steps.locked-wrangler.outputs.wrangler-version != '' && steps.locked-wrangler.outputs.wrangler-version || inputs.wrangler-version) }}
           WRANGLER_WD: ${{ steps.paths.outputs.wrangler-working-directory }}
           WORKDIR: ${{ steps.paths.outputs.working-directory }}
         run: |

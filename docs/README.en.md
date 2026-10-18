@@ -1,6 +1,7 @@
+<p align="center"><img src="../assets/brand/icon-rounded.png" width="128" alt="base-ci logo" /></p>
 <h1 align="center">base-ci</h1>
 <p align="center">Reusable GitHub Actions checks and releases with verified source revisions.</p>
-<p align="center"><a href="../README.md">简体中文</a></p>
+<p align="center"><a href="https://hexly.ai/projects/base-ci">Hexly project archive</a> · <a href="../README.md">简体中文</a></p>
 
 ## What it does
 
@@ -73,6 +74,7 @@ GitHub self-tests exercise real installation, lifecycle policies, scanners, SSH 
 - [Workflow input definitions](../.github/workflows/).
 - [SSH deploy action](../.github/actions/ssh-deploy/README.md).
 - [Maintenance guide](../AGENTS.md).
+- [Brand assets and usage](../assets/brand/README.md).
 
 ## License
 

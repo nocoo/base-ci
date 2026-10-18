@@ -1,6 +1,7 @@
+<p align="center"><img src="assets/brand/icon-rounded.png" width="128" alt="base-ci logo" /></p>
 <h1 align="center">base-ci</h1>
 <p align="center">可复用的 GitHub Actions 检查与可追溯发布流程。</p>
-<p align="center"><a href="docs/README.en.md">English</a></p>
+<p align="center"><a href="https://hexly.ai/projects/base-ci">Hexly 项目档案</a> · <a href="docs/README.en.md">English</a></p>
 
 ## 这是什么
 
@@ -73,6 +74,7 @@ GitHub 自测覆盖真实依赖安装、生命周期策略、扫描器、SSH 和
 - [工作流输入定义](.github/workflows/)。
 - [SSH 部署 action](.github/actions/ssh-deploy/README.md)。
 - [维护说明](AGENTS.md)。
+- [品牌素材与使用范围](assets/brand/README.md)。
 
 ## 许可证
 

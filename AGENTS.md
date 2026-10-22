@@ -42,7 +42,7 @@ This file is the contract; hooks, CI and configuration enforce it. Raise weaker 
 
 ## Commands
 
-Run from the repository root. Local helper checks need Node and Python 3; CI pins Node 22.23.2 for release tests. Install actionlint separately (CI verifies 1.7.12). There is no root package install or bundler.
+Run from the repository root. Local helper checks need Node and Python 3; CI pins Node 22.23.4 for release tests. Install actionlint separately (CI verifies 1.7.12). There is no root package install or bundler.
 
 ```bash
 actionlint -shellcheck= -pyflakes=

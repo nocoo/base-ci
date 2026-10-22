@@ -20,7 +20,7 @@ on:
         type: string
         default: ""
       node-version:
-        description: "Node.js version (empty = resolved from file or default 26.8.1)"
+        description: "Node.js version (empty = resolved from file or default 26.12.1)"
         type: string
         default: ""
       working-directory:
@@ -221,7 +221,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -231,7 +231,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@908d392767f22fc305256ac3fef653ee003173e0
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -414,7 +414,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -424,7 +424,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@908d392767f22fc305256ac3fef653ee003173e0
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           env-json: ${{ inputs.env-json }}
 

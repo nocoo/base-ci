@@ -20,7 +20,7 @@ def clean_version(v: Optional[str]) -> str:
 
 def validate_exact_version(kind: str, v: str) -> None:
     if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', v):
-        raise ValueError(f"{kind} version must be an exact version (e.g. 1.4.0, 26.8.1), got '{v}'")
+        raise ValueError(f"{kind} version must be an exact version (e.g. 1.4.0, 26.12.1), got '{v}'")
 
 def read_file(path: str) -> str:
     try:
@@ -65,7 +65,7 @@ def resolve_runtimes(workdir: str, pkg_mgr: str, req_runtime: str, req_node: str
                 eff_node = clean_version(content.splitlines()[0])
                 break
     if not eff_node:
-        eff_node = "26.8.1"
+        eff_node = "26.12.1"
     validate_exact_version("Node", eff_node)
 
     # 3. Resolve Runtime version

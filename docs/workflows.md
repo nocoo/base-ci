@@ -58,7 +58,7 @@ Commands default to the selected package manager's `run typecheck`, `run lint`, 
 | `runtime-version` | An exact package manager version, including the patch |
 | `node-version` | An exact Node version; independent of the package manager version |
 | Runtime resolution | Explicit input, project version metadata, then the pinned default |
-| Defaults | Bun 1.4.2, Node 26.8.1, npm 11.19.1, pnpm 10.34.5 |
+| Defaults | Bun 1.4.2, Node 26.12.1, npm 11.19.1, pnpm 10.34.5 |
 | `install-policy: blocked` | Frozen install with lifecycle scripts disabled |
 | `install-policy: trusted` | Bun only; every installed directory must declare `trustedDependencies` explicitly |
 | `install-policy: project` | Frozen install using the project's lifecycle policy |
@@ -154,7 +154,7 @@ For a cf-only project, replace the Wrangler inputs with:
 with:
   source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
   package-manager: npm
-  node-version: '22.23.2'
+  node-version: '22.23.4'
   deploy-cli: cf
   cf-version: '1.0.0-beta.12'
   build-command: npm run build

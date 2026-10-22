@@ -40,7 +40,7 @@ class TestSetupJsCore(unittest.TestCase):
                 json.dump(pkg, f)
             runtime, node, mgr = resolve_runtimes(tmpdir, "bun", "", "")
             self.assertEqual(runtime, "1.4.0")
-            self.assertEqual(node, "26.8.1")
+            self.assertEqual(node, "26.12.1")
             self.assertEqual(mgr, "bun")
 
     def test_resolve_runtimes_nvmrc(self):

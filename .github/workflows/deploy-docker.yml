@@ -84,7 +84,7 @@ jobs:
       run-id: ${{ steps.source.outputs.source-run-id }}
     steps:
       - id: source
-        uses: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
+        uses: nocoo/base-ci/.github/actions/release-source@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
           expected-workflow-name: ${{ inputs.expected-workflow-name }}
@@ -93,7 +93,7 @@ jobs:
           source-run-id: ${{ inputs.source-run-id }}
           github-token: ${{ github.token }}
       - id: plan
-        uses: nocoo/base-ci/.github/actions/docker-manifest@10029d24ee49eb8c27f2807ee9b777570a7447de
+        uses: nocoo/base-ci/.github/actions/docker-manifest@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ steps.source.outputs.target-sha }}
@@ -183,7 +183,7 @@ jobs:
           path: base-ci-digests
           merge-multiple: true
       - id: manifest
-        uses: nocoo/base-ci/.github/actions/docker-manifest@10029d24ee49eb8c27f2807ee9b777570a7447de
+        uses: nocoo/base-ci/.github/actions/docker-manifest@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ needs.source.outputs.sha }}
@@ -200,7 +200,7 @@ jobs:
           echo '::error::SSH host is unreachable'
           exit 1
       - name: Recheck proven source before deployment
-        uses: nocoo/base-ci/.github/actions/release-source@8cbdb970c3a38240289c1e152c40dd550ac62dba
+        uses: nocoo/base-ci/.github/actions/release-source@2231caf82cf16f103f48cab467b3464b106d6604
         with:
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
           expected-workflow-name: ${{ inputs.expected-workflow-name }}
@@ -210,7 +210,7 @@ jobs:
           source-sha: ${{ needs.source.outputs.sha }}
           github-token: ${{ github.token }}
       - name: Deploy verified images
-        uses: nocoo/base-ci/.github/actions/ssh-deploy@e07457ae8bf223fafef8a1c2e89659e3f692e3cc
+        uses: nocoo/base-ci/.github/actions/ssh-deploy@2231caf82cf16f103f48cab467b3464b106d6604
         env:
           IMAGE_SHA: ${{ needs.source.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}

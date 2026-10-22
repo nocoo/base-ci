@@ -31,7 +31,7 @@ test('deploy-worker public secrets, lock and environment stay on the called job'
 
 test('deploy-worker pins verified Actions SHAs and validates the selected local CLI', () => {
   assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
-  assert.match(workflow, /nocoo\/base-ci\/\.github\/actions\/setup-js@081cdf665b9c67f233abfcc9242ce0be76ce2bb4/);
+  assert.match(workflow, /nocoo\/base-ci\/\.github\/actions\/setup-js@2231caf82cf16f103f48cab467b3464b106d6604/);
   assert.match(workflow, /deploy-cli:[\s\S]*default: "wrangler"/);
   assert.match(workflow, /wrangler-version:[\s\S]*default: "lockfile"/);
   assert.match(workflow, /resolve-locked-wrangler/);

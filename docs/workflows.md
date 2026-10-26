@@ -191,6 +191,45 @@ with:
 
 The caller needs `contents: read`, `actions: read` and `packages: write`. Credentials are `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, optional `VPS_PORT`/`VPS_KNOWN_HOSTS`, and `GHCR_PULL_USER`/`GHCR_PULL_TOKEN`. `BUILD_ARGS` carries additional caller build arguments.
 
+### Tailscale before SSH (optional)
+
+When the deploy host is reachable only on a tailnet (for example after blocking public SSH from GitHub-hosted runners), opt in with `tailscale: true`. The deploy job joins the tailnet using [Tailscale workload identity federation](https://tailscale.com/docs/integrations/github/github-action) (`tailscale/github-action@v4`, pinned to a full commit SHA in `deploy-docker.yml`), then uses the same OpenSSH + deploy key path as today. Tailscale SSH (`--ssh`) is not enabled.
+
+Out of band (Tailscale admin console): create a federated identity with `auth_keys` scope, define tags (for example `tag:ci`) and ACL rules that allow `tag:ci` to reach the deploy host on the SSH port. Map the federated identity **client ID** and **audience** into GitHub secrets named `TS_OAUTH_CLIENT_ID` and `TS_AUDIENCE` (Tailscale’s documented names; federation uses `audience`, not `TS_OAUTH_SECRET`).
+
+Pass those secrets through `workflow_call` and set `VPS_HOST` to the host’s Tailscale IP or MagicDNS short name (for example `100.101.0.2` or `jp2`). Default ephemeral node tags are `tag:ci` (`tailscale-tags` input). Optional `tailscale-ping` is a comma-separated peer list; when empty, the workflow pings `VPS_HOST` after join.
+
+`VPS_KNOWN_HOSTS` should include the key for the hostname or IP you pass as `VPS_HOST`. Refresh with `ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST"` from a machine that can reach the host, then update the secret.
+
+Example caller fragment (bump `BASE_CI_SHA` after upgrading base-ci):
+
+```yaml
+jobs:
+  release:
+    uses: nocoo/base-ci/.github/workflows/deploy-docker.yml@BASE_CI_SHA
+    secrets:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+      GHCR_PULL_USER: ${{ secrets.GHCR_PULL_USER }}
+      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+    with:
+      tailscale: true
+      # tailscale-tags: tag:ci
+      # tailscale-ping: jp2,100.101.0.2
+      environment: app / production
+      images: '[...]'
+      deploy-directory: /opt/app
+      remote-verify-command: ./verify-containers.sh
+      verify-command: ./scripts/verify-production.sh
+```
+
+Callers that do not set `tailscale: true` behave as before and do not need Tailscale secrets. The deploy job requests `id-token: write` so federation can obtain a GitHub OIDC token when Tailscale is enabled.
+
 Every image has the proven source SHA as its tag and OCI revision. A release manifest must contain exactly one valid digest for every requested image/service, all from that same source. On the server, the workflow reads the actual Compose configuration, overrides only the selected images with digests, pulls them serially and recreates those services. It preserves other service settings and project health checks. Successful manifests are recorded in `.base-ci-releases/<SHA>.json`; a temporary effective Compose file is removed after use. The server needs Python 3 and Docker Compose v2.
 
 ## Verification and upgrades

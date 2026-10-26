@@ -39,6 +39,18 @@ on:
       timeout-minutes:
         type: number
         default: 25
+      tailscale:
+        description: Join the Tailscale tailnet via workload identity federation before SSH (requires TS_OAUTH_CLIENT_ID and TS_AUDIENCE secrets)
+        type: boolean
+        default: false
+      tailscale-tags:
+        description: Comma-separated Tailscale tags for the ephemeral CI node (must exist in the tailnet)
+        type: string
+        default: tag:ci
+      tailscale-ping:
+        description: Optional comma-separated peers to ping after joining (defaults to VPS_HOST when tailscale is true)
+        type: string
+        default: ''
     secrets:
       VPS_HOST:
         required: false
@@ -56,6 +68,12 @@ on:
         required: false
       BUILD_ARGS:
         description: Additional Docker build arguments supplied by the caller
+        required: false
+      TS_OAUTH_CLIENT_ID:
+        description: Tailscale federated identity client ID (workload identity federation; not the OAuth client secret path)
+        required: false
+      TS_AUDIENCE:
+        description: Tailscale federated identity audience for GitHub workload identity
         required: false
     outputs:
       target-sha:
@@ -159,6 +177,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
     outputs:
       release-images: ${{ steps.manifest.outputs.release-images }}
     steps:
@@ -173,10 +195,18 @@ jobs:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           GHCR_PULL_USER: ${{ secrets.GHCR_PULL_USER }}
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          TAILSCALE: ${{ inputs.tailscale }}
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
         run: |
           for name in VPS_HOST VPS_USER VPS_SSH_KEY GHCR_PULL_USER GHCR_PULL_TOKEN; do
             test -n "${!name}" || { echo "::error::Missing deployment credential: $name"; exit 1; }
           done
+          if [ "$TAILSCALE" = "true" ]; then
+            for name in TS_OAUTH_CLIENT_ID TS_AUDIENCE; do
+              test -n "${!name}" || { echo "::error::Missing Tailscale federation secret: $name (see deploy-docker tailscale inputs)"; exit 1; }
+            done
+          fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: base-ci-image-*-${{ needs.source.outputs.sha }}
@@ -188,6 +218,14 @@ jobs:
           images: ${{ inputs.images }}
           source-sha: ${{ needs.source.outputs.sha }}
           directory: base-ci-digests
+      - name: Connect Tailscale
+        if: inputs.tailscale
+        uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: ${{ inputs.tailscale-tags }}
+          ping: ${{ inputs.tailscale-ping != '' && inputs.tailscale-ping || secrets.VPS_HOST }}
       - name: Wait for SSH reachability
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}

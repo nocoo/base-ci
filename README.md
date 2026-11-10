@@ -7,7 +7,7 @@
 
 为 nocoo 项目共享 JavaScript 检查、原生测试、安全扫描和发布来源验证。消费项目保留触发条件、项目命令与部署环境，共享流程处理工具安装、检查、制品和来源校验。
 
-所有检查按 [CI 槽位（Slot）编号](docs/slots.md) 组织：`S` 静态、`G` 安全、`B` 构建、`L` 分层测试、`P` 发布物、`Z` 收口。跨仓库按编号即可比较覆盖面。`quality.yml` 把每个槽位实现为一个顶层作业，因此每个槽位只渲染一个检查名（`quality / G1: Secret Scan`），分支保护只需要求 `Z1: Gate`。
+所有检查按 [CI 槽位（Slot）编号](docs/slots.md) 组织：`S` 静态、`G` 安全、`B` 构建、`L` 分层测试、`P` 发布物、`Z` 收口。跨仓库按编号即可比较覆盖面。`quality.yml` 把每个槽位实现为一个顶层作业，因此每个槽位只渲染一个检查名（`quality / G1: Secret Scan`），分支保护只要求完整检查名 `quality / Z1: Gate`。
 
 ## 功能
 
@@ -42,6 +42,8 @@ jobs:
 ```
 
 默认启用类型、lint、单元与安全检查，可选检查需显式开启。命令默认采用对应包管理器的项目脚本；先确认消费仓库存在这些脚本。`coverage-path` 必须指向真实报告。输入、原生任务、Worker 和 Docker 发布示例见[集成说明](docs/workflows.md)。
+
+`quality.yml` 的槽位作业只跑 `ubuntu-latest`。需要 macOS runner 的仓库按[槽位标准](docs/slots.md)的原生模式自建本地槽位工作流：仓库本地 `on: workflow_call` 工作流 + 调用方作业键 `quality`（不写 `name:`，或写成 `quality`），检查名同样是 `quality / <ID>: <Name>`。
 
 需要按槽位声明覆盖范围时传入 `slot-status`；不传则沿用布尔开关推导的 legacy 行为。声明格式与校验规则见[槽位标准](docs/slots.md)。L3 多浏览器、准备命令与证据上传的输入见[集成说明](docs/workflows.md)。
 

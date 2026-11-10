@@ -36,7 +36,12 @@ base-ci 把每个仓库的 CI 检查切成**槽位（slot）**。槽位编号是
 
 ## 规范检查名（canonical check names）
 
-`quality.yml` 把每个槽位实现为一个**顶层作业**，作业名就是该槽位的规范检查名。GitHub 的检查名（check-run name）是 `<调用方作业> / <规范检查名>`（例如 `quality / G1: Secret Scan`）；调用方工作流名只是界面上的分组，不属于检查名的一部分。没有重复段、没有矩阵后缀。
+`quality.yml` 把每个槽位实现为一个**顶层作业**，作业名就是该槽位的规范检查名。GitHub 的检查名（check-run name）是 `<调用方作业显示名> / <规范检查名>`（例如 `quality / G1: Secret Scan`）。
+
+- **前缀取调用方作业的显示名**：写了 `jobs.<key>.name:` 就用这个值，没写 `name:` 就用作业键。
+- 因此消费仓库必须让前缀落在 `quality` 上：**作业键写 `quality`，并且要么不写 `jobs.quality.name`，要么把它精确写成 `quality`**。写成别的值（例如 `jobs.quality.name: CI`）前缀就变成 `CI / S1: Typecheck`。
+- **工作流的 `name:` 不参与检查名**。界面上显示的 `CI` 之类只是分组，不要写成 `CI / quality / …`。
+- 没有重复段、没有矩阵后缀。
 
 | 槽位 | 规范检查名 | quality.yml 作业键 |
 | --- | --- | --- |
@@ -53,7 +58,7 @@ base-ci 把每个仓库的 CI 检查切成**槽位（slot）**。槽位编号是
 | P1 | `P1: Package Check` | `p1-package-check` |
 | Z1 | `Z1: Gate` | `z1-gate` |
 
-**分支保护只要求 `Z1: Gate`。** Z1 会校验声明与实际执行的一致性、每个启用槽位的成功状态与 SHA 一致性；把 S1/S2/G1/G2 等单槽位也设为必过项只会把一次失败变成多次失败。升级时先跑一次真实 CI，读出实际显示名，再改规则——**不要猜名字**。
+**分支保护只要求 `quality / Z1: Gate`（完整检查名）。** `Z1: Gate` 只是作业标题，不是可以粘贴进分支保护的检查名。Z1 会校验声明与实际执行的一致性、每个启用槽位的成功状态与 SHA 一致性；把 S1/S2/G1/G2 等单槽位也设为必过项只会把一次失败变成多次失败。升级时先跑一次真实 CI，读出实际显示名，再改规则——**不要猜名字**。
 
 ### v2026.11 → v2026.12 检查名映射
 
@@ -70,6 +75,142 @@ v2026.11 里 `quality.yml` 调用 `security.yml`、`workflow-lint.yml` 和 `test
 | `quality / P1: Package Check / P1: Package Check (...)` | `quality / P1: Package Check` |
 | `quality / L1: Unit Tests & Coverage`（S1/S2 只是 step） | `quality / S1: Typecheck` + `quality / S2: Lint` + `quality / L1: Unit Tests & Coverage` |
 
+
+## 调用约定
+
+### 触发条件
+
+推荐主分支推送 + PR 触发：
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:   # 可选
+```
+
+- `pull_request:` 不写 `branches:` 时对所有目标分支生效；要限定就写 `pull_request: {branches: [main]}`（或写成多行 `branches:` 列表）。
+- `on: [push, pull_request]` 会在 PR 分支的每个提交上同时触发 `push` 与 `pull_request`，同一次提交跑两遍 CI。meowth 目前是这个写法，属于偏差，不是标准。
+
+### 固定引用格式
+
+引用共享工作流或 action 时，同一行写完整 40 位 SHA，版本号只放在注释里：
+
+```yaml
+uses: nocoo/base-ci/.github/workflows/quality.yml@1ea10ecab22b72512399485391603fe03a161016  # v2026.12
+```
+
+- ref 里只能是 40 位十六进制 SHA。不要写 `@sha#v2026.12`，也不要把 tag 放进 ref。S3 的不可变引用校验按 YAML 解析后的值判断，注释不会影响它。
+- 注释前留**两个**空格。S3 的 yamllint 关掉了 `line-length`、`document-start`、`truthy`，但默认 `comments` 规则要求注释前至少两个空格：留一个空格会输出 `too few spaces before comment: expected 2` 警告（非致命，退出码仍为 0），留两个空格则没有警告。
+- 升级只改 SHA 与注释里的版本号，行为不变。
+
+### 安装重试
+
+`setup-js` 每个目录只做**一次**冻结安装（`bun install --frozen-lockfile` / `npm ci` / `pnpm install --frozen-lockfile`），**没有重试**；registry 抖动会直接让整个槽位作业失败。
+
+- 通过 `env-json` 传入的 `NPM_CONFIG_FETCH_*`（his.fm）**不影响首次安装**：`quality.yml` 里 `configure-env` 排在 `setup-js` 之后，这些变量只对后续命令生效。这是当前的限制，不是有效的缓解手段。
+- 目前可用的安装侧手段是项目自己的 `.npmrc`（例如 `fetch-retries=10`、`fetch-retry-mintimeout=20000`、`fetch-retry-maxtimeout=120000`、`fetch-timeout=300000`），`npm ci` 会读它。
+- 在 `setup-js` 里内置重试、或让输入在安装前生效，是后续待办，本次未实现。
+
+### 检查名不含矩阵后缀
+
+`quality.yml` 的槽位作业**不使用 `strategy.matrix`**，这是设计决定：检查名必须精确等于 `quality / <ID>: <Name>`，不能带矩阵后缀。需要按架构或系统分别构建时，在同一个作业内串行完成（见 B1 与 L3）。
+
+### 原生（macOS / 非 ubuntu）模式
+
+`quality.yml` 的每个槽位作业都是 `runs-on: ubuntu-latest`，没有 OS 矩阵。需要 macOS runner（Swift、混合原生工程）的仓库**不要用 `quality.yml` 承接这些槽位**，改用仓库本地的可复用工作流。
+
+官方模式如下。showtime、infospace、owl、meowth 都是这个形态，但文件名不固定：
+
+1. 仓库内 `.github/workflows/<local>.yml` 是 `on: workflow_call` 的可复用工作流，承载全部槽位作业。
+2. 消费仓库的 `ci.yml` 只有一个调用作业，**作业键必须是 `quality`，并且不写 `jobs.quality.name`（或写成 `quality`）**，让调用方显示名落在 `quality` 上：`jobs.quality.uses: ./.github/workflows/<local>.yml`。
+3. 可复用工作流里的每个槽位作业名必须**恰好**是 `<ID>: <Name>`（与规范表同大小写）。GitHub 因此渲染 `quality / S1: Typecheck` … `quality / Z1: Gate`。
+4. 12 个 v1 槽位必须全部存在。`na` / 未使用的槽位保留同名作业，用 `if:` 跳过，让 12 个名字都出现在检查列表里。
+5. 步骤**内联**。不要为这些槽位嵌套 `nocoo/base-ci` 的 `test-job.yml` / `quality.yml` / `security.yml` / `workflow-lint.yml`：嵌套会加上运行时后缀与双层前缀（`s1-typecheck / S1: Typecheck (none on macos-26)`）。钉到 base-ci SHA 的 composite action（例如 `setup-js`）可以用。
+6. 属于 B1 的架构 / 系统矩阵**收成一个 `B1: Build` 作业**，不要发布 `B1: Build (arm64/amd64)` 这类名字。
+7. 仓库本地 `Z1: Gate` 作业（`if: always()`，`needs:` 全部槽位作业与任何额外作业）是唯一必过检查，显示为 `quality / Z1: Gate`。
+
+本地工作流可以逐作业选择 runner：原生构建与测试用 macOS，可移植检查（workflow lint、依赖扫描等）用 Ubuntu。
+
+骨架：
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  quality:                     # 不写 name:，调用方显示名就是作业键 quality
+    uses: ./.github/workflows/quality-slots.yml
+```
+
+```yaml
+# .github/workflows/quality-slots.yml
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  s1-typecheck:
+    name: "S1: Typecheck"
+    runs-on: macos-26
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # 内联步骤
+      - name: Record tested SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  l15-worker-runtime:
+    name: "L1.5: Worker Runtime Tests"
+    if: ${{ vars.ENABLE_L15 == 'true' }}   # 默认关闭：na 槽位被跳过
+    runs-on: macos-26
+    steps:
+      - run: echo "L1.5 not applicable"
+
+  z1-gate:
+    name: "Z1: Gate"
+    if: always()
+    needs:
+      - s1-typecheck
+      - l15-worker-runtime
+      # 其余 10 个槽位作业
+    runs-on: ubuntu-latest
+    steps:
+      - name: Z1 aggregate slot jobs
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          S1_SHA: ${{ needs.s1-typecheck.outputs.tested-sha }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: ...      # 校验 impl 成功、na 被跳过、tested-sha 与 EXPECTED_SHA 一致
+```
+
+`impl` 槽位作业必须输出 `tested-sha`（`outputs.tested-sha` 指向 `record-sha` step，`record-sha` 用 `if: always()` 写 `git rev-parse HEAD`），Z1 才能比对各槽位与 `github.sha` 是否同一提交。`na` 槽位作业被跳过，不产出 SHA。
+
+### 槽位外作业
+
+12 个槽位之外的作业是**允许**的（例如 meowth 的 `compile-windows`）。规则：
+
+- 作业名里**不得出现槽位编号**（`S1` / `G2` / `L1` / `L1.5` / `Z1` 等）。chamelo 的 `L1: Pre-commit proof`、basalt 的 `L3 consumer gates (extended)` 与 `L1 pre-commit self-test` 目前违反这一条，属于待修偏差。
+- **凡是阻塞合并的槽位外作业必须被聚合**，否则它的失败会被绿色的 gate 盖住；不打算阻塞的作业不要设为必过检查。
+- **`quality.yml` 的 `Z1: Gate` 只能看到 `quality.yml` 内部的槽位作业**：调用方 `ci.yml` 里的同级作业对它不可见。所以调用 `quality.yml` 时只有三个诚实的选项：
+  1. 槽位外作业不阻塞、也不进分支保护（`quality / Z1: Gate` 是唯一必过项）；
+  2. 把它单独设成有意图的必过检查（此时它自己就是必过项，不依赖 Z1 聚合）；
+  3. 改用原生模式的仓库本地 `Z1: Gate`，把槽位外作业写进 `needs:`。
+- meowth 的 `compile-windows` 是当前正确示例：作业名不带槽位编号，并且进了本地 `Z1: Gate` 的 `needs:`。
 
 ## 状态声明
 
@@ -97,6 +238,12 @@ v2026.11 里 `quality.yml` 调用 `security.yml`、`workflow-lint.yml` 和 `test
 - `impl`：已实现。`reason` 可选。
 - `na`：不适用。**必须**写非空 `reason`，说明为什么这个槽位与本仓库无关。
 - `todo`：尚未实现。**必须**写非空 `reason`，说明缺什么。`todo` 不阻塞 Z1，但原因必须如实写。
+
+### na 与 todo 的区别
+
+- `na` = **产品上不适用**：仓库里根本没有这个槽位要覆盖的东西。
+- `todo` = **适用但 CI 还没跑**：仓库里有对应的东西（浏览器界面、要发布的 npm 包、Workers 运行时套件……），只是还没接进 CI。`todo` 不阻塞 Z1，但原因必须如实写出。
+- 判据只有一条：**东西存在却没接 CI 就是 `todo`，东西不存在才是 `na`。**
 
 ### 两种模式
 
@@ -171,6 +318,7 @@ jobs:
 - **不属于**：应用代码 lint、业务测试、依赖漏洞扫描。
 - **典型工具**：actionlint 1.7.12、yamllint（可选）。
 - **消费仓库插入方式**：`workflow-lint: true` 启用；`workflow-lint-files`（留空检查全部工作流）、`workflow-lint-required-workflow`（要求出现某个可复用工作流）、`workflow-lint-yamllint`（额外跑 yamllint）。
+- **限制**：`workflow-lint-required-workflow` 是**单个字符串**。S3 只检查是否存在某个 `uses:` 以 `<值>@` 开头，因此**无法在一次 `quality.yml` 调用里要求两个可复用工作流**。调用 `quality.yml` 的仓库要同时要求多个可复用工作流时，必须自己再加一个仓库自有的检查；只有原生模式的本地 S3 作业才能把这类要求写进自己的作业里。多值输入是后续待办，本次不改行为。
 - **na / todo 声明**：仓库没有自己的 workflow 时写 `na` + 原因；还没把 workflow 自检接进 CI 写 `todo` + 原因。
 - **scope**：S3 的逻辑内联在 `quality.yml` 的 `S3: Workflow Lint` 作业里，其结果与 `tested-sha` 进入 Z1 校验。独立调用 `workflow-lint.yml` 的结果不在 Z1 的 scope 内。Z1 读取的是 S3 作业的 `result` 与 `tested-sha`，不读取 S3 内部 step 的 `outcome`。
 
@@ -199,13 +347,14 @@ jobs:
 - **不属于**：单元测试、发布、部署。
 - **典型工具**：打包器、esbuild、Rust/Swift 构建系统。
 - **消费仓库插入方式**：`build: true` 启用，`build-command` 指定命令（留空用 `run build`）；产物用 `artifact-name` / `artifact-paths` 上传。
+- **矩阵**：属于 B1 的架构 / 系统构建收在同一个作业里串行完成，不要用 `strategy.matrix` 发布多个 B1 检查名（检查名必须精确等于 `quality / B1: Build`）。
 - **na / todo 声明**：没有需要构建的产物写 `na` + 原因；构建只在本地做写 `todo` + 原因。
 
 ### L1 单测 + 覆盖率
 
 - **目的**：用最小粒度验证逻辑，并给出覆盖率证据。
-- **属于**：单元测试、覆盖率报告、覆盖率路径校验。
-- **不属于**：端到端测试（L2/L3 层级）、性能基准；共享 workflow 不统一规定覆盖率数值门槛，消费仓库在 `test-command` 内执行自己的覆盖率门槛。
+- **属于**：单元测试、覆盖率报告、覆盖率路径校验、普通单测里用 miniflare 等模拟的 Worker 绑定。
+- **不属于**：端到端测试（L2/L3 层级）、专门的 Workers 运行时测试套件（L1.5）、性能基准；共享 workflow 不统一规定覆盖率数值门槛，消费仓库在 `test-command` 内执行自己的覆盖率门槛。
 - **典型工具**：Node test runner、bun test、Vitest、Swift XCTest、Go test。
 - **消费仓库插入方式**：`unit: true` 启用，`test-command` 指定命令（留空用 `run test:coverage`），`coverage-path` 指向真实报告目录。
 - **作业**：`L1: Unit Tests & Coverage` 是独立顶层作业。它**始终运行**（安装依赖并校验 `disabled-check-reasons`），单测 step 由 `unit` 开关控制：关闭时 step 被跳过，作业本身仍可成功。Z1 同时读取单测 step 的 outcome 和作业自身的状态。
@@ -214,12 +363,17 @@ jobs:
 ### L1.5 Worker 运行时测试
 
 - **目的**：在真正的 Worker 运行时里验证绑定、D1、KV、DO 等边缘能力。
-- **属于**：workerd / vitest-pool-workers / miniflare、绑定模拟、迁移脚本在本地运行。
-- **不属于**：普通 Node 单元测试（L1）、生产部署、真实生产数据。
+- **属于**：专门的 workerd / vitest-pool-workers / miniflare 运行时套件、绑定模拟、迁移脚本在本地运行。
+- **不属于**：普通 Node 单元测试（L1，即使单测里模拟了 Worker 绑定）、生产部署、真实生产数据。
 - **典型工具**：`@cloudflare/vitest-pool-workers`、miniflare、wrangler dev。
 - **消费仓库插入方式**：`worker: true` 启用，`worker-directory` 指定目录（默认 `worker`），`worker-command` 指定命令（留空用 `run test`），`worker-prepare-command` 指定准备步骤。
-- **na / todo 声明**：不是 Worker 项目写 `na` + 原因；有 Worker 但没接运行时测试写 `todo` + 原因。
-- **边界**：**只部署静态资源的 Worker（无 Workers 运行时套件）写 `na`**，理由写清“没有 Workers 运行时测试套件”；用 Playwright 驱动 `wrangler dev` 跑浏览器用例属于 **L3**，不是 L1.5。
+- **na / todo 声明**：见下方边界规则。一句话：**没有专门的 Workers 运行时测试套件就写 `na`；有套件但没进 CI 写 `todo`。**
+- **边界**：**只有专门的 Workers 运行时测试套件**（`@cloudflare/vitest-pool-workers`、workerd，或以绑定 / D1 / KV / DO / Workers 运行时为目的的 miniflare 套件）才算 L1.5。
+  - 绑定只在普通 L1 单测里模拟（例如 his.fm「Miniflare/Worker 绑定在 L1 Vitest 单测中覆盖」）：仍然是 **L1**，L1.5 写 `na`，理由写明绑定在 L1 覆盖。
+  - 没有专门的运行时套件，Worker 的 HTTP 由 L2（octo）或界面 / HTTP 由 L3（basalt）覆盖：L1.5 写 `na`，理由写明覆盖位置。
+  - **只部署静态资源的 Worker**（matrix、chamelo、sleepy）：L1.5 写 `na`，理由写清「没有 Workers 运行时测试套件」。
+  - **“我们部署了一个 Worker”本身不构成 L1.5 的理由**。仓库里有专门的 pool-workers / workerd / miniflare 运行时套件但没进 CI：状态是 `todo`，不是 `na`。
+  - 用 Playwright 驱动 `wrangler dev` 跑浏览器用例属于 **L3**，不是 L1.5。
 
 ### L2 API E2E
 
@@ -241,8 +395,9 @@ jobs:
 - **消费仓库插入方式**：`l3: true` 启用，`l3-command`（留空用 `run test:e2e:pw`）、`l3-browsers`（空格分隔的浏览器列表）、`l3-browser`（单个浏览器，默认 `chromium`）、`l3-browser-directory` 指定 Playwright 所在包。
 - **准备步骤**：`l3-prepare-command` 单独指定 L3 的准备命令（例如先构建再跑 E2E）；留空时回退到共享的 `prepare-command`。
 - **证据留存**：`l3-artifact-name`、`l3-artifact-path`（可多行）、`l3-artifact-retention-days`（默认 7）。上传使用 `if: always()`，失败也保留证据。
-- **na / todo 声明**：没有浏览器界面写 `na` + 原因；有界面但没接 E2E 写 `todo` + 原因。
-- **边界**：用 Playwright 驱动 `wrangler dev` 跑浏览器场景属于 **L3**；在 workerd / miniflare 里验证绑定与 KV 属于 **L1.5**。
+- **na / todo 声明**：没有浏览器界面写 `na` + 原因；**有浏览器界面但 CI 里还没有 Playwright（或等价方案）写 `todo` + 原因，不能写 `na`**（fundly、his.fm、chamelo、matrix 就是这种 `todo`）。
+- **多应用**：一个 L3 槽位里串行跑多个应用，把所有报告路径都写进 `l3-artifact-path`（next-ai 的 `examples/next-app` 与 `examples/vite-app` 就是这个形态）。不要在 `quality.yml` 里把应用拆成矩阵；额外的应用专属作业属于槽位外作业，见“槽位外作业”。
+- **边界**：用 Playwright 驱动 `wrangler dev` 跑浏览器场景属于 **L3**；**专门的** workerd / miniflare Workers 运行时套件属于 **L1.5**；普通 L1 单测里的绑定覆盖仍属于 **L1**（见 L1.5 边界）。
 
 多浏览器 + 准备命令 + 证据上传的调用示例：
 
@@ -271,7 +426,7 @@ jobs:
 - **不属于**：发布动作本身、镜像构建、端到端业务测试。
 - **典型工具**：publint、arethetypeswrong、attw、下游 fixture 安装。
 - **消费仓库插入方式**：`package-check: true` 启用，`package-command` 指定命令（留空用 `run ci:package`）。
-- **na / todo 声明**：不发布 npm 包写 `na` + 原因；要发布但还没写检查写 `todo` + 原因。
+- **na / todo 声明**：**只要仓库发布 npm 包**（公共或私有 registry，或会发布出去的 workspace 包，例如 basalt 的 `packages/basalt`），P1 必须是 `impl` 或 `todo`，**不能是 `na`**。要发布但还没写检查写 `todo` + 原因（next-ai：「尚未接入 publint / attw 或 ci:package」）。`na` 只用于根本不发布的包（根 `package.json` 为 `private`、workspace 包也不发布，例如 fundly、his.fm、matrix、octo、sleepy）。
 
 ### Z1 Gate 聚合
 
@@ -281,7 +436,7 @@ jobs:
 - **典型工具**：`quality.yml` 内联的 Python 校验（不新增 composite action，避免内部 SHA 重钉）。
 - **消费仓库插入方式**：不需要额外输入；它是 `quality.yml` 永远存在的作业。
 - **na / todo 声明**：不允许。`Z1` 只能是 `impl`。
-- **scope**：Z1 只覆盖 `quality.yml` 内部编排的槽位作业。独立调用的 `workflow-lint.yml`、`security.yml`、`test-job.yml` 不在 Z1 的 scope 内，其结果由各自的调用方负责。
+- **scope**：Z1 只覆盖 `quality.yml` 内部编排的槽位作业。独立调用的 `workflow-lint.yml`、`security.yml`、`test-job.yml` 不在 Z1 的 scope 内，其结果由各自的调用方负责。调用方工作流里的同级作业（槽位外作业）同样不可见，见“槽位外作业”。
 
 ## Z1 校验规则
 
@@ -361,12 +516,12 @@ v2026.11 里 `quality.yml` 还会嵌套调用 `test-job.yml`，显示名因此�
 
 `bun-quality.yml` 是旧版不可变接口，job 名保持原样，不受本次改名影响。
 
-**不要猜 required check 的名字。** GitHub 的检查名包含调用方作业前缀（形如 `quality / Z1: Gate`），真实名称取决于消费仓库的调用方式。升级后先跑一次真实 CI，从运行页面或 `gh api` 读取实际显示名，再改分支保护规则。
+**不要猜 required check 的名字。** GitHub 的检查名是 `<调用方作业显示名> / <规范检查名>`：前缀取调用方作业的 `name:`，没写 `name:` 时取作业键，所以调用方作业键必须是 `quality` 且不设 `name:`（或设为 `quality`）；工作流的 `name:` 不参与。升级后先跑一次真实 CI，从运行页面或 `gh api` 读取实际显示名（形如 `quality / Z1: Gate`），再改分支保护规则。
 
 ## 迁移步骤
 
 1. **先升级引用**：把 `BASE_CI_SHA` 换成发布后的完整 40 位 SHA。行为不变——不传 `slot-status` 就是 legacy 模式。
-2. **更新分支保护**：推荐只保留 `Z1: Gate` 一条必过项（它已经校验声明与实际执行、每个启用槽位的成功与 SHA 一致）。如果仓库习惯逐个槽位必过，则使用新的规范检查名（`S1: Typecheck`、`S2: Lint`、`S3: Workflow Lint`、`G1: Secret Scan`、`G2: Dependency Vulnerabilities`、`B1: Build`、`L1: Unit Tests & Coverage`、`L1.5: Worker Runtime Tests`、`L2: API E2E`、`L3: Browser E2E`、`P1: Package Check`）。检查名带调用方作业前缀（`quality / Z1: Gate`），**升级后先跑一次真实 CI 读取实际名称再改规则**。
+2. **更新分支保护**：推荐只保留 `quality / Z1: Gate` 一条必过项（它已经校验声明与实际执行、每个启用槽位的成功与 SHA 一致）。如果仓库习惯逐个槽位必过，则使用新的规范检查名（`S1: Typecheck`、`S2: Lint`、`S3: Workflow Lint`、`G1: Secret Scan`、`G2: Dependency Vulnerabilities`、`B1: Build`、`L1: Unit Tests & Coverage`、`L1.5: Worker Runtime Tests`、`L2: API E2E`、`L3: Browser E2E`、`P1: Package Check`）加调用方作业显示名前缀 `quality / `（前提：调用方作业键是 `quality` 且不设 `name:`，或 `name:` 恰为 `quality`）。**升级后先跑一次真实 CI 读取实际名称再改规则**。
 3. **确认发布链路**：`deploy-worker.yml` / `deploy-docker.yml` 的来源证明校验仓库、工作流、分支、事件与精确 SHA，不依赖 job 名，因此无需改动。
 4. **进入 strict 模式**：为每个 v1 槽位写 `slot-status` 声明。`na` 与 `todo` 都要写原因，`impl` 必须真的启用对应开关。
 5. **逐步补齐**：`todo` 槽位落地后把对应开关打开，状态改成 `impl`。

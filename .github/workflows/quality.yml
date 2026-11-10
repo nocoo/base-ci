@@ -656,19 +656,19 @@ jobs:
           IN_GITLEAKS_IGNORE: ${{ inputs.gitleaks-ignore-path }}
         run: |
           set -euo pipefail
-          GITLEAKS_ARGS="detect --no-banner --verbose --redact --no-git"
+          GITLEAKS_ARGS=(detect --no-banner --verbose --redact --no-git)
           if [ -n "$IN_GITLEAKS_CONFIG" ]; then
-            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=$IN_GITLEAKS_CONFIG"
+            GITLEAKS_ARGS+=(--config="$IN_GITLEAKS_CONFIG")
           elif [ -f ".gitleaks.toml" ]; then
-            GITLEAKS_ARGS="$GITLEAKS_ARGS --config=.gitleaks.toml"
+            GITLEAKS_ARGS+=(--config=.gitleaks.toml)
           fi
           if [ -n "$IN_GITLEAKS_IGNORE" ]; then
-            GITLEAKS_ARGS="$GITLEAKS_ARGS --gitleaks-ignore-path=$IN_GITLEAKS_IGNORE"
+            GITLEAKS_ARGS+=(--gitleaks-ignore-path="$IN_GITLEAKS_IGNORE")
           elif [ -f ".gitleaksignore" ]; then
-            GITLEAKS_ARGS="$GITLEAKS_ARGS --gitleaks-ignore-path=.gitleaksignore"
+            GITLEAKS_ARGS+=(--gitleaks-ignore-path=.gitleaksignore)
           fi
-          echo "Running gitleaks with args: $GITLEAKS_ARGS"
-          gitleaks $GITLEAKS_ARGS
+          echo "Running gitleaks with args: ${GITLEAKS_ARGS[*]}"
+          gitleaks "${GITLEAKS_ARGS[@]}"
 
       - name: Custom security command
         if: inputs.security-command != ''
@@ -729,19 +729,14 @@ jobs:
             exit 1
           fi
 
-          OSV_BASE_ARGS=""
-          if [ -n "$IN_OSV_CONFIG" ]; then
-            OSV_BASE_ARGS="--config=$IN_OSV_CONFIG"
-          fi
-
           for lf in "${LOCKFILES[@]}"; do
             if [ ! -f "$lf" ]; then
               echo "::error::Lockfile '$lf' does not exist."
               exit 1
             fi
             echo "::group::Scanning lockfile: $lf"
-            if [ -n "$OSV_BASE_ARGS" ]; then
-              osv-scanner scan --lockfile="$lf" $OSV_BASE_ARGS
+            if [ -n "$IN_OSV_CONFIG" ]; then
+              osv-scanner scan --lockfile="$lf" --config="$IN_OSV_CONFIG"
             else
               osv-scanner scan --lockfile="$lf"
             fi

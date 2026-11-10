@@ -243,6 +243,24 @@ class SlotGateTest(unittest.TestCase):
         result, _ = run_gate(json.dumps(statuses), states)
         self.assert_rejected(result, "no implemented slot besides Z1")
 
+    def test_strict_mode_rejects_a_host_job_sha_mismatch(self):
+        states = slot_states(
+            **{
+                "S1": (False, "skipped", ""),
+                "S2": (False, "skipped", ""),
+                "L1": (False, "skipped", ""),
+                "S3": (True, "success", OTHER_SHA),
+            }
+        )
+        statuses = declaration()
+        for slot in ALL_SLOTS:
+            if slot in ("S3", "Z1"):
+                continue
+            statuses[slot] = {"status": "na", "reason": "not applicable"}
+        statuses["S3"] = {"status": "impl"}
+        result, _ = run_gate(json.dumps(statuses), states)
+        self.assert_rejected(result, "Commit SHA mismatch between slot S3 and slot S1/S2/L1 host job")
+
     def test_strict_mode_allows_todo_slots(self):
         states = slot_states()
         payload = json.dumps(declaration({"B1": {"status": "todo", "reason": "planned later"}}))

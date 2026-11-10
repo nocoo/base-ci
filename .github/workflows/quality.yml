@@ -789,6 +789,7 @@ jobs:
                           fail(f"Slot {slot} is declared {status} but its job or step ran with outcome '{state['outcome']}'")
               if not verified:
                   fail("slot-status declares no implemented slot besides Z1")
+              verified.append(("S1/S2/L1 host job", os.environ["SLOT_HOST_SHA"]))
               return verified
 
 

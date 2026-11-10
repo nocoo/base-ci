@@ -124,7 +124,8 @@ jobs:
       lint-command: >-
         node -e "require('node:assert/strict').equal(require('./package.json').dependencies['is-number'],'7.0.0')"
       test-command: >-
-        node -e "require('node:assert/strict').equal(require('is-number')('42'),true)" && mkdir -p coverage && echo 'TN:' > coverage/lcov.info && echo 'end_of_record' >> coverage/lcov.info
+        mkdir -p coverage &&
+        node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info test/check.test.mjs
       coverage-path: .github/fixtures/security-basic/coverage
       coverage-artifact-name: coverage-report-strict-slots
       workflow-lint: true

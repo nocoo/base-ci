@@ -8,7 +8,7 @@ Consumers keep their triggers, project commands, deployment environment and a fe
 
 | Workflow | Use it for |
 | --- | --- |
-| [quality.yml](../.github/workflows/quality.yml) | Bun, npm or pnpm typecheck, lint, unit tests and security; optional build, L2, L3, Worker and package checks |
+| [quality.yml](../.github/workflows/quality.yml) | Bun, npm or pnpm slot gate: S1 typecheck, S2 lint, S3 workflow lint, G1/G2 security, B1 build, L1 unit tests, L1.5 Worker, L2/L3 end-to-end tests, P1 package check, Z1 aggregate |
 | [test-job.yml](../.github/workflows/test-job.yml) | One command with shared setup, a caller-owned runner matrix, Python or Node without JS dependencies, and optional browser/report support |
 | [security.yml](../.github/workflows/security.yml) | Multiple lockfiles, directory or full-history secret scanning, or an existing project security gate |
 | [workflow-lint.yml](../.github/workflows/workflow-lint.yml) | Actionlint, immutable base-ci references, optional required release template and yamllint |
@@ -16,6 +16,8 @@ Consumers keep their triggers, project commands, deployment environment and a fe
 | [deploy-docker.yml](../.github/workflows/deploy-docker.yml) | Build one or more GHCR images from a proven CI commit and deploy their exact digests through Docker Compose over SSH |
 
 The workflow files define the complete input and output contracts. `bun-quality.yml` is the older string-switch interface; new migrations use `quality.yml`. Historical behavior remains available through immutable commits and the `v2026.1`–`v2026.6` tags. The old moving `v2026` alias is not an upgrade policy.
+
+Checks are named after their [CI slot](slots.md) (`S1`, `S2`, `S3`, `G1`, `G2`, `B1`, `L1`, `L1.5`, `L2`, `L3`, `P1`, `Z1`), so repositories can be compared by slot number. `bun-quality.yml` keeps its old job names and is not affected by the slot renames.
 
 ## JavaScript CI
 
@@ -49,6 +51,34 @@ Commands default to the selected package manager's `run typecheck`, `run lint`, 
 `prepare-command` runs before checks in each relevant isolated job. Use it when tests need a built library. Enabling the separate `build` job does not put its output in other jobs. Worker preparation is separate: `worker-prepare-command` defaults to empty.
 
 `coverage-path` is explicitly opt-in. It must point to a real report, relative to the repository root. A requested missing report fails the job. Build artifacts use `artifact-name` and `artifact-paths`. The successful aggregate emits `tested-sha` only after every enabled job succeeds and reports the same checked out commit.
+
+### Slot declarations
+
+`slot-status` declares the state of every slot as JSON. An empty value keeps the legacy behaviour: the boolean inputs derive the slot states and `disabled-check-reasons` still explains the disabled core checks. A non-empty value switches to the strict mode, where every slot must be declared and the `Z1: Gate` job verifies the declarations against the jobs and steps that actually ran.
+
+```yaml
+jobs:
+  quality:
+    uses: nocoo/base-ci/.github/workflows/quality.yml@BASE_CI_SHA
+    with:
+      slot-status: >-
+        {"S1": {"status": "impl"},
+        "S2": {"status": "impl"},
+        "S3": {"status": "impl"},
+        "G1": {"status": "impl"},
+        "G2": {"status": "impl"},
+        "B1": {"status": "todo", "reason": "build output is not split yet"},
+        "L1": {"status": "impl"},
+        "L1.5": {"status": "na", "reason": "not a Worker repository"},
+        "L2": {"status": "impl"},
+        "L3": {"status": "na", "reason": "no browser UI"},
+        "P1": {"status": "impl"},
+        "Z1": {"status": "impl"}}
+```
+
+`na` and `todo` need a non-empty reason. `impl` must match reality: the slot has to be enabled, run and report the same `tested-sha` as every other implemented slot. The full rules, the old input mapping and the migration steps live in the [slot standard](slots.md).
+
+The slot renames change the required check names in branch protection: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. Release source proof does not depend on job names.
 
 ## Runtime and installation policy
 
@@ -101,6 +131,8 @@ Pass public environment values through `env-json`. Pass only the named test cred
 The shared scanner installs Gitleaks 8.30.1 and OSV Scanner 2.5.1 from versioned release assets with verified SHA-256 checksums. `lockfiles` accepts multiple paths relative to `working-directory`; every declared file must exist. Project scanner configurations and reports stay in the consumer repository.
 
 `scan-history: true` fetches and scans the full Git history. The default scans the checked out directory. Projects with stronger or specialized security gates can run them through `security-command`, with the built-in scans switched off explicitly and their original Git range, configuration and reports preserved.
+
+Inside `quality.yml` the security gate runs as two jobs: `G1: Secret Scan` (gitleaks) and `G2: Dependency Vulnerabilities` (OSV). The legacy `security: true` input still enables both. A custom `security-command` runs once, in the G1 job, and the G2 job only scans lockfiles.
 
 ## Release source proof
 
@@ -234,6 +266,6 @@ Every image has the proven source SHA as its tag and OCI revision. A release man
 
 ## Verification and upgrades
 
-Four workflows enforce the provider: syntax and installation policy, real quality/test/scanner fixtures, SSH action behavior, and release-source/manifest contracts. Fixtures include Linux/macOS, Python, npm, pnpm, an older supported Bun and the current Bun. Release source validation has also been exercised against real consumer CI runs. Production end-to-end evidence comes from consumer Release runs.
+Five workflows enforce the provider: syntax and installation policy, real quality/test/scanner fixtures, SSH action behavior, release-source/manifest contracts, and the slot gate behaviour (legacy and strict declaration paths). Fixtures include Linux/macOS, Python, npm, pnpm, an older supported Bun and the current Bun. Release source validation has also been exercised against real consumer CI runs. Production end-to-end evidence comes from consumer Release runs.
 
 For a provider update: change pinned tools once, run provider self-tests, migrate representative JS/native/Worker/Docker consumers, and create an immutable release. Consumers then update their full SHA and run their own checks. Keep application runtime upgrades separate when compatibility requires it. Manual package publication must use an existing intended version/tag; a successful YAML check is not evidence that a package was published.

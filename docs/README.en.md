@@ -41,6 +41,8 @@ jobs:
 
 Type, lint, unit and security checks default to enabled; optional checks require explicit activation. Commands default to the selected package manager’s project scripts, which must exist in the consumer. `coverage-path` must name a real report. See [integration](workflows.md) for inputs, native jobs and Worker/Docker examples.
 
+Every check carries a CI slot number (`S` static, `G` security, `B` build, `L` layered tests, `P` package, `Z` gate). Pass `slot-status` to declare the coverage of a repository; without it the boolean inputs keep their legacy meaning. See the [slot standard](slots.md).
+
 ## Development
 
 There is no root package install or bundler. Helpers live in `.github/actions/`, workflows in `.github/workflows/`, and fixtures in `.github/fixtures/`. Local checks require Node.js, Python 3 and actionlint.
@@ -53,8 +55,10 @@ Pin full SHAs and preserve immutable release tags. Production credentials belong
 actionlint -shellcheck= -pyflakes=
 node --test .github/actions/docker-manifest/index.test.mjs
 node --test .github/actions/release-source/resolve.test.mjs .github/actions/release-source/workflow-contract.test.mjs
+node --test .github/slots/quality.workflow-contract.test.mjs
 python3 -m unittest discover -s .github/actions/setup-js -p 'test_*.py'
 python3 -m unittest discover -s .github/actions/configure-env -p 'test_*.py'
+python3 -m unittest discover -s .github/slots -p 'test_*.py'
 ```
 
 GitHub self-tests exercise real installation, lifecycle policies, scanners, SSH and release-source validation. Package-manager setup and SSH runner configuration tests run on disposable CI runners, not the daily workstation. Actual production end-to-end evidence comes from consumer releases.
@@ -71,6 +75,7 @@ GitHub self-tests exercise real installation, lifecycle policies, scanners, SSH 
 ## Documentation
 
 - [Complete workflow integration guide](workflows.md).
+- [CI slot standard](slots.md).
 - [Workflow input definitions](../.github/workflows/).
 - [SSH deploy action](../.github/actions/ssh-deploy/README.md).
 - [Maintenance guide](../AGENTS.md).

@@ -8,8 +8,8 @@ never drift apart.
 
 Every slot is a top-level job in quality.yml, so a slot state is described by
 its boolean input, the job result (the L1 unit step outcome for L1) and the
-tested SHA the job reported. The L1 job always runs, therefore it also reports
-its own job status and the gate fails when that job failed.
+tested SHA the job reported. The L1 job always runs, therefore the gate also
+checks its final job result and fails when that job failed.
 """
 
 import json
@@ -68,8 +68,8 @@ def slot_states(**overrides):
     return states
 
 
-def build_env(states, l1_job_status="success"):
-    env = {"SLOT_L1_JOB_STATUS": l1_job_status}
+def build_env(states, l1_job_result="success"):
+    env = {"SLOT_L1_JOB_RESULT": l1_job_result}
     for slot, (enabled, outcome, sha) in states.items():
         key = SLOT_KEYS[slot]
         env[f"SLOT_{key}_ENABLED"] = "true" if enabled else "false"
@@ -101,10 +101,10 @@ def declaration(status_overrides=None, base=None):
     return statuses
 
 
-def run_gate(slot_status, states=None, l1_job_status="success"):
+def run_gate(slot_status, states=None, l1_job_result="success"):
     states = states if states is not None else slot_states()
     env = dict(os.environ)
-    env.update(build_env(states, l1_job_status))
+    env.update(build_env(states, l1_job_result))
     env["SLOT_STATUS"] = slot_status
     with tempfile.TemporaryDirectory() as tmp:
         script = pathlib.Path(tmp) / "slot_gate.py"
@@ -146,13 +146,13 @@ class SlotGateTest(unittest.TestCase):
         self.assert_rejected(result, "Disabled slot L3")
 
     def test_legacy_mode_rejects_a_failed_l1_job(self):
-        result, _ = run_gate("", l1_job_status="failure")
-        self.assert_rejected(result, "The L1 job finished with status 'failure'")
+        result, _ = run_gate("", l1_job_result="failure")
+        self.assert_rejected(result, "The L1 job finished with result 'failure'")
 
     def test_legacy_mode_rejects_a_failed_l1_job_even_when_the_unit_step_was_skipped(self):
         states = slot_states(**{"L1": (False, "skipped", SHA)})
-        result, _ = run_gate("", states, l1_job_status="failure")
-        self.assert_rejected(result, "The L1 job finished with status 'failure'")
+        result, _ = run_gate("", states, l1_job_result="failure")
+        self.assert_rejected(result, "The L1 job finished with result 'failure'")
 
     def test_legacy_mode_accepts_a_disabled_l1_slot_with_a_successful_l1_job(self):
         states = slot_states(**{"L1": (False, "skipped", SHA)})
@@ -288,8 +288,8 @@ class SlotGateTest(unittest.TestCase):
 
     def test_strict_mode_rejects_a_failed_l1_job(self):
         payload = json.dumps(declaration())
-        result, _ = run_gate(payload, l1_job_status="failure")
-        self.assert_rejected(result, "The L1 job finished with status 'failure'")
+        result, _ = run_gate(payload, l1_job_result="failure")
+        self.assert_rejected(result, "The L1 job finished with result 'failure'")
 
     def test_strict_mode_rejects_an_l1_job_sha_mismatch(self):
         states = slot_states(

@@ -425,7 +425,6 @@ jobs:
     outputs:
       tested-sha: ${{ steps.record-sha.outputs.sha }}
       l1-unit: ${{ steps.l1-unit.outcome }}
-      l1-job-status: ${{ steps.record-sha.outputs.status }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -532,7 +531,6 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
@@ -1158,7 +1156,7 @@ jobs:
           SLOT_L1_ENABLED: ${{ inputs.unit }}
           SLOT_L1_OUTCOME: ${{ needs.l1-unit-tests.outputs.l1-unit }}
           SLOT_L1_SHA: ${{ needs.l1-unit-tests.outputs.tested-sha }}
-          SLOT_L1_JOB_STATUS: ${{ needs.l1-unit-tests.outputs.l1-job-status }}
+          SLOT_L1_JOB_RESULT: ${{ needs.l1-unit-tests.result }}
           SLOT_L15_ENABLED: ${{ inputs.worker }}
           SLOT_L15_OUTCOME: ${{ needs.l15-worker-runtime.result }}
           SLOT_L15_SHA: ${{ needs.l15-worker-runtime.outputs.tested-sha }}
@@ -1217,9 +1215,9 @@ jobs:
 
 
           def require_l1_job():
-              status = os.environ.get("SLOT_L1_JOB_STATUS", "")
-              if status != "success":
-                  fail(f"The L1 job finished with status '{status}'")
+              result = os.environ.get("SLOT_L1_JOB_RESULT", "")
+              if result != "success":
+                  fail(f"The L1 job finished with result '{result}'")
               if not os.environ.get("SLOT_L1_SHA", ""):
                   fail("The L1 job did not report a tested SHA")
 

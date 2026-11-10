@@ -379,9 +379,9 @@ S1、S2、L1 现在是三个平行作业（`S1: Typecheck`、`S2: Lint`、`L1: U
 
 `L1: Unit Tests & Coverage` 作业**始终运行**，因为它承载了 `disabled-check-reasons` 的校验（关闭 typecheck / lint / unit / security 必须给出解释）。单测本身是作业内的一个 step，由 `unit` 开关控制：
 
-- step id 是 `l1-unit`，作业输出 `l1-unit`（step outcome）与 `l1-job-status`（作业状态）；
+- step id 是 `l1-unit`；Z1 读取它的 outcome，并直接读取 L1 作业的最终 result；
 - `unit: false` 时 step 被跳过（outcome 为 `skipped`），作业本身仍可成功；
-- Z1 用 step outcome 判定槽位状态，用作业状态判定这一轮能不能算数：L1 作业失败（包括 `disabled-check-reasons` 校验失败）时 Z1 直接失败。
+- Z1 用 step outcome 判定槽位状态，用作业的最终 result 判定这一轮能不能算数：L1 作业失败（包括 `disabled-check-reasons` 校验失败或 action post 阶段失败）时 Z1 直接失败。
 
 ### 内联槽位逻辑，不嵌套可复用工作流
 

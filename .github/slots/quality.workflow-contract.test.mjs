@@ -96,14 +96,13 @@ test('quality.yml runs S1 and S2 as independent top-level jobs', () => {
   assert.doesNotMatch(s2, /inputs\.typecheck-command/);
 });
 
-test('quality.yml keeps L1 as a canonical job that exports the unit step outcome and its job status', () => {
+test('quality.yml keeps L1 as a canonical job that exports the unit step outcome and its final job result', () => {
   const block = jobBlock(quality, 'l1-unit-tests');
   assert.match(block, /name: "L1: Unit Tests & Coverage"/);
   assert.match(block, /l1-unit: \$\{\{ steps\.l1-unit\.outcome \}\}/);
-  assert.match(block, /l1-job-status: \$\{\{ steps\.record-sha\.outputs\.status \}\}/);
   assert.match(block, /tested-sha: \$\{\{ steps\.record-sha\.outputs\.sha \}\}/);
   assert.match(block, /id: l1-unit\n\s+if: inputs\.unit/);
-  assert.match(block, /echo "status=\$\{\{ job\.status \}\}"/);
+  assert.doesNotMatch(block, /job\.status/);
   assert.doesNotMatch(block, /^ {4}if: inputs\.unit$/m);
 });
 
@@ -165,7 +164,7 @@ test('quality.yml Z1 gate needs every slot job and validates the declarations', 
   assert.match(block, /SLOT_S1_OUTCOME: \$\{\{ needs\.s1-typecheck\.result \}\}/);
   assert.match(block, /SLOT_S2_OUTCOME: \$\{\{ needs\.s2-lint\.result \}\}/);
   assert.match(block, /SLOT_L1_OUTCOME: \$\{\{ needs\.l1-unit-tests\.outputs\.l1-unit \}\}/);
-  assert.match(block, /SLOT_L1_JOB_STATUS: \$\{\{ needs\.l1-unit-tests\.outputs\.l1-job-status \}\}/);
+  assert.match(block, /SLOT_L1_JOB_RESULT: \$\{\{ needs\.l1-unit-tests\.result \}\}/);
   assert.match(block, /SLOT_S3_OUTCOME: \$\{\{ needs\.s3-workflow-lint\.result \}\}/);
   assert.match(block, /SLOT_G1_OUTCOME: \$\{\{ needs\.g1-secret-scan\.result \}\}/);
   assert.match(block, /SLOT_G2_OUTCOME: \$\{\{ needs\.g2-dependency-vulnerabilities\.result \}\}/);
@@ -187,7 +186,7 @@ test('quality.yml declares every slot state the Z1 gate reads', () => {
     assert.match(block, new RegExp(`SLOT_${key}_OUTCOME:`), `Missing SLOT_${key}_OUTCOME`);
     assert.match(block, new RegExp(`SLOT_${key}_SHA:`), `Missing SLOT_${key}_SHA`);
   }
-  assert.match(block, /SLOT_L1_JOB_STATUS:/);
+  assert.match(block, /SLOT_L1_JOB_RESULT:/);
   assert.match(gate, /SLOT_\{key\}_ENABLED/);
   assert.match(gate, /SLOT_\{key\}_OUTCOME/);
   assert.match(gate, /SLOT_\{key\}_SHA/);

@@ -172,7 +172,7 @@ jobs:
         {"typecheck": "fixture has no type system",
         "lint": "fixture has no linter",
         "unit": "fixture has no unit tests",
-        "security": "fixture has no dependency lockfile to scan"}
+        "security": "the security slot is not under test in this fixture"}
       l3: true
       l3-browsers: "chromium webkit"
       l3-prepare-command: "echo 'l3 prepared' > l3-prepared.marker"

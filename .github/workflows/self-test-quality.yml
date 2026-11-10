@@ -104,30 +104,37 @@ jobs:
 
   # ─────────────────────────────────────────────────────
   # 2b. Quality workflow invocation with an explicit slot-status
-  #     declaration (strict slot path: every v1 slot is declared)
+  #     declaration (strict slot path: every v1 slot is declared).
+  #     It waits for the legacy path because both calls share the
+  #     quality.yml concurrency group and cancel each other otherwise.
   # ─────────────────────────────────────────────────────
   test-quality-strict-slots:
-    name: "Quality Gate (strict slot path, bun on quality-basic fixture)"
+    name: "Quality Gate (strict slot path, security-basic fixture)"
+    needs: test-quality-basic
     uses: ./.github/workflows/quality.yml
     with:
       package-manager: bun
-      working-directory: .github/fixtures/quality-basic
+      working-directory: .github/fixtures/security-basic
       install-policy: project
-      typecheck: true
+      typecheck: false
       lint: true
       unit: true
-      security: false
-      disabled-check-reasons: '{"security": "fixture has no lockfile scan target"}'
-      typecheck-command: "echo 'typecheck'"
-      lint-command: "echo 'lint'"
-      test-command: "echo 'unit'"
+      security: true
+      disabled-check-reasons: '{"typecheck": "plain JavaScript fixture without a type system"}'
+      lint-command: >-
+        node -e "require('node:assert/strict').equal(require('./package.json').dependencies['is-number'],'7.0.0')"
+      test-command: >-
+        node -e "require('node:assert/strict').equal(require('is-number')('42'),true)" && mkdir -p coverage && echo 'TN:' > coverage/lcov.info && echo 'end_of_record' >> coverage/lcov.info
+      coverage-path: .github/fixtures/security-basic/coverage
+      coverage-artifact-name: coverage-report-strict-slots
       workflow-lint: true
+      workflow-lint-files: .github/workflows/quality.yml
       slot-status: >-
-        {"S1": {"status": "impl"},
+        {"S1": {"status": "na", "reason": "fixture is plain JavaScript without a type system"},
         "S2": {"status": "impl"},
         "S3": {"status": "impl"},
-        "G1": {"status": "na", "reason": "fixture carries no secret material"},
-        "G2": {"status": "na", "reason": "fixture lockfile resolves a local workspace only"},
+        "G1": {"status": "impl"},
+        "G2": {"status": "impl"},
         "B1": {"status": "todo", "reason": "fixture has no build output"},
         "L1": {"status": "impl"},
         "L1.5": {"status": "na", "reason": "fixture has no Worker runtime"},

@@ -147,6 +147,19 @@ test('quality.yml declares every slot state the Z1 gate reads', () => {
   assert.match(gate, /"L1\.5": "L15"/);
 });
 
+test('self-test-quality.yml keeps a legacy and a strict slot path', () => {
+  const selfTest = readFileSync(join(root, '.github/workflows/self-test-quality.yml'), 'utf8');
+  const legacy = jobBlock(selfTest, 'test-quality-basic');
+  const strict = jobBlock(selfTest, 'test-quality-strict-slots');
+  assert.doesNotMatch(legacy, /slot-status:/);
+  assert.match(strict, /needs: test-quality-basic/);
+  assert.match(strict, /slot-status: >-/);
+  assert.match(strict, /security: true/);
+  assert.match(strict, /workflow-lint: true/);
+  assert.match(strict, /typecheck: false/);
+  assert.match(strict, /coverage-artifact-name: coverage-report-strict-slots/);
+});
+
 test('bun-quality.yml keeps the legacy job names', () => {
   assert.match(bunQuality, /name: "Worker Tests"/);
   assert.doesNotMatch(bunQuality, /slot-status:/);

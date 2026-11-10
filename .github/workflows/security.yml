@@ -83,7 +83,7 @@ on:
 
 jobs:
   security:
-    name: "Security (Secrets & Vulnerabilities)"
+    name: "${{ inputs.scan-secrets && (inputs.scan-dependencies && 'G1 + G2: Security Scan' || 'G1: Secret Scan') || (inputs.scan-dependencies && 'G2: Dependency Vulnerabilities' || 'G1 + G2: Security Gate (custom command)') }}"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -110,7 +110,7 @@ jobs:
       - name: Install security scanners (gitleaks + osv-scanner)
         uses: nocoo/base-ci/.github/actions/setup-security-scanners@2231caf82cf16f103f48cab467b3464b106d6604
 
-      - name: Gitleaks detect
+      - name: "G1: Gitleaks Secret Scan"
         if: inputs.scan-secrets
         shell: bash
         working-directory: ${{ inputs.working-directory }}
@@ -137,7 +137,7 @@ jobs:
           echo "Running gitleaks with args: $GITLEAKS_ARGS"
           gitleaks $GITLEAKS_ARGS
 
-      - name: OSV dependency scan
+      - name: "G2: OSV Dependency Scan"
         if: inputs.scan-dependencies
         shell: bash
         working-directory: ${{ inputs.working-directory }}

@@ -15,13 +15,25 @@ on:
         type: boolean
         default: false
 
+    outputs:
+      job-status:
+        description: "Workflow lint status"
+        value: ${{ jobs.lint.outputs.job-status }}
+      tested-sha:
+        description: "Commit SHA linted by this workflow"
+        value: ${{ jobs.lint.outputs.tested-sha }}
+
 permissions:
   contents: read
 
 jobs:
   lint:
+    name: "S3: Workflow Lint"
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      job-status: ${{ steps.step-result.outputs.status }}
+      tested-sha: ${{ steps.step-result.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,3 +81,10 @@ jobs:
           read -r -a files <<< "$WORKFLOW_FILES"
           if [ "${#files[@]}" = 0 ]; then files=(.github/workflows/*.yml); fi
           yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' "${files[@]}"
+      - name: Record step result and SHA
+        id: step-result
+        if: always()
+        shell: bash
+        run: |
+          echo "status=${{ job.status }}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

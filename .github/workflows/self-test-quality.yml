@@ -72,10 +72,11 @@ jobs:
       command: node -e "require('node:assert/strict').equal(require('fixture-module')(' value '), 'value')"
 
   # ─────────────────────────────────────────────────────
-  # 2. Quality workflow invocation on fixture (with cd, &&, pipes, quotes, multiline env)
+  # 2. Quality workflow invocation on fixture (legacy slot path:
+  #    no slot-status input, statuses derived from the boolean inputs)
   # ─────────────────────────────────────────────────────
   test-quality-basic:
-    name: "Quality Gate (bun on quality-basic fixture)"
+    name: "Quality Gate (legacy slot path, bun on quality-basic fixture)"
     uses: ./.github/workflows/quality.yml
     with:
       package-manager: bun
@@ -102,6 +103,40 @@ jobs:
       env-json: '{"TEST_MULTILINE": "line1\nline2"}'
 
   # ─────────────────────────────────────────────────────
+  # 2b. Quality workflow invocation with an explicit slot-status
+  #     declaration (strict slot path: every v1 slot is declared)
+  # ─────────────────────────────────────────────────────
+  test-quality-strict-slots:
+    name: "Quality Gate (strict slot path, bun on quality-basic fixture)"
+    uses: ./.github/workflows/quality.yml
+    with:
+      package-manager: bun
+      working-directory: .github/fixtures/quality-basic
+      install-policy: project
+      typecheck: true
+      lint: true
+      unit: true
+      security: false
+      disabled-check-reasons: '{"security": "fixture has no lockfile scan target"}'
+      typecheck-command: "echo 'typecheck'"
+      lint-command: "echo 'lint'"
+      test-command: "echo 'unit'"
+      workflow-lint: true
+      slot-status: >-
+        {"S1": {"status": "impl"},
+        "S2": {"status": "impl"},
+        "S3": {"status": "impl"},
+        "G1": {"status": "na", "reason": "fixture carries no secret material"},
+        "G2": {"status": "na", "reason": "fixture lockfile resolves a local workspace only"},
+        "B1": {"status": "todo", "reason": "fixture has no build output"},
+        "L1": {"status": "impl"},
+        "L1.5": {"status": "na", "reason": "fixture has no Worker runtime"},
+        "L2": {"status": "na", "reason": "fixture exposes no HTTP API"},
+        "L3": {"status": "na", "reason": "fixture has no browser UI"},
+        "P1": {"status": "todo", "reason": "fixture is not published as a package"},
+        "Z1": {"status": "impl"}}
+
+  # ─────────────────────────────────────────────────────
   # 3. Security workflow invocation
   # ─────────────────────────────────────────────────────
   test-security-scan:
@@ -115,18 +150,26 @@ jobs:
       security-command: "echo 'custom security command ok' && true"
 
   # ─────────────────────────────────────────────────────
-  # 4. Verify outputs of the quality run
+  # 4. Verify outputs of both slot paths
   # ─────────────────────────────────────────────────────
   verify-quality-output:
     name: "Verify Quality Gate Output"
-    needs: [test-quality-basic, test-native-python]
+    needs: [test-quality-basic, test-quality-strict-slots, test-native-python]
     runs-on: ubuntu-latest
     steps:
-      - name: Check tested-sha
+      - name: Check legacy slot path tested-sha
         run: |
           SHA="${{ needs.test-quality-basic.outputs.tested-sha }}"
-          echo "Verified tested-sha: $SHA"
+          echo "Verified tested-sha for the legacy slot path: $SHA"
           if [ "$SHA" != "${{ github.sha }}" ]; then
-            echo "::error::tested-sha must match the workflow commit!"
+            echo "::error::tested-sha of the legacy slot path must match the workflow commit!"
+            exit 1
+          fi
+      - name: Check strict slot path tested-sha
+        run: |
+          SHA="${{ needs.test-quality-strict-slots.outputs.tested-sha }}"
+          echo "Verified tested-sha for the strict slot path: $SHA"
+          if [ "$SHA" != "${{ github.sha }}" ]; then
+            echo "::error::tested-sha of the strict slot path must match the workflow commit!"
             exit 1
           fi

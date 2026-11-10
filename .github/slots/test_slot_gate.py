@@ -5,6 +5,11 @@ provider never needs an extra composite action to be re-pinned. These tests
 extract that inline Python from `.github/workflows/quality.yml` and run it
 against slot states, so the shipped workflow and the local test suite can
 never drift apart.
+
+Every slot is a top-level job in quality.yml, so a slot state is described by
+its boolean input, the job result (the L1 unit step outcome for L1) and the
+tested SHA the job reported. The L1 job always runs, therefore the gate also
+checks its final job result and fails when that job failed.
 """
 
 import json
@@ -24,12 +29,14 @@ END_MARKER = "# SLOT_GATE_PYTHON_END"
 SHA = "1" * 40
 OTHER_SHA = "2" * 40
 
-STEP_SLOTS = {"S1": "S1", "S2": "S2", "L1": "L1"}
-JOB_SLOTS = {
+SLOT_KEYS = {
+    "S1": "S1",
+    "S2": "S2",
     "S3": "S3",
     "G1": "G1",
     "G2": "G2",
     "B1": "B1",
+    "L1": "L1",
     "L1.5": "L15",
     "L2": "L2",
     "L3": "L3",
@@ -61,14 +68,13 @@ def slot_states(**overrides):
     return states
 
 
-def build_env(states, host_result="success", host_sha=SHA):
-    env = {"SLOT_HOST_RESULT": host_result, "SLOT_HOST_SHA": host_sha}
+def build_env(states, l1_job_result="success"):
+    env = {"SLOT_L1_JOB_RESULT": l1_job_result}
     for slot, (enabled, outcome, sha) in states.items():
-        key = STEP_SLOTS.get(slot) or JOB_SLOTS[slot]
+        key = SLOT_KEYS[slot]
         env[f"SLOT_{key}_ENABLED"] = "true" if enabled else "false"
         env[f"SLOT_{key}_OUTCOME"] = outcome
-        if slot not in STEP_SLOTS:
-            env[f"SLOT_{key}_SHA"] = sha
+        env[f"SLOT_{key}_SHA"] = sha
     return env
 
 
@@ -95,10 +101,10 @@ def declaration(status_overrides=None, base=None):
     return statuses
 
 
-def run_gate(slot_status, states=None, host_result="success", host_sha=SHA):
+def run_gate(slot_status, states=None, l1_job_result="success"):
     states = states if states is not None else slot_states()
     env = dict(os.environ)
-    env.update(build_env(states, host_result, host_sha))
+    env.update(build_env(states, l1_job_result))
     env["SLOT_STATUS"] = slot_status
     with tempfile.TemporaryDirectory() as tmp:
         script = pathlib.Path(tmp) / "slot_gate.py"
@@ -139,9 +145,32 @@ class SlotGateTest(unittest.TestCase):
         result, _ = run_gate("", states)
         self.assert_rejected(result, "Disabled slot L3")
 
-    def test_legacy_mode_rejects_a_failed_host_job(self):
-        result, _ = run_gate("", host_result="failure", host_sha="")
-        self.assert_rejected(result, "hosting S1/S2/L1")
+    def test_legacy_mode_rejects_a_failed_l1_job(self):
+        result, _ = run_gate("", l1_job_result="failure")
+        self.assert_rejected(result, "The L1 job finished with result 'failure'")
+
+    def test_legacy_mode_rejects_a_failed_l1_job_even_when_the_unit_step_was_skipped(self):
+        states = slot_states(**{"L1": (False, "skipped", SHA)})
+        result, _ = run_gate("", states, l1_job_result="failure")
+        self.assert_rejected(result, "The L1 job finished with result 'failure'")
+
+    def test_legacy_mode_accepts_a_disabled_l1_slot_with_a_successful_l1_job(self):
+        states = slot_states(**{"L1": (False, "skipped", SHA)})
+        result, output = run_gate("", states)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"tested-sha={SHA}", output)
+
+    def test_legacy_mode_accepts_a_run_without_any_enabled_slot(self):
+        states = slot_states(
+            **{
+                "S1": (False, "skipped", ""),
+                "S2": (False, "skipped", ""),
+                "L1": (False, "skipped", SHA),
+            }
+        )
+        result, output = run_gate("", states)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"tested-sha={SHA}", output)
 
     def test_strict_mode_accepts_a_complete_declaration(self):
         payload = json.dumps(declaration())
@@ -251,19 +280,24 @@ class SlotGateTest(unittest.TestCase):
             **{
                 "S1": (False, "skipped", ""),
                 "S2": (False, "skipped", ""),
-                "L1": (False, "skipped", ""),
+                "L1": (False, "skipped", SHA),
             }
         )
         result, _ = run_gate(json.dumps(statuses), states)
         self.assert_rejected(result, "no implemented slot besides Z1")
 
-    def test_strict_mode_rejects_a_host_job_sha_mismatch(self):
+    def test_strict_mode_rejects_a_failed_l1_job(self):
+        payload = json.dumps(declaration())
+        result, _ = run_gate(payload, l1_job_result="failure")
+        self.assert_rejected(result, "The L1 job finished with result 'failure'")
+
+    def test_strict_mode_rejects_an_l1_job_sha_mismatch(self):
         states = slot_states(
             **{
                 "S1": (False, "skipped", ""),
                 "S2": (False, "skipped", ""),
-                "L1": (False, "skipped", ""),
-                "S3": (True, "success", OTHER_SHA),
+                "L1": (False, "skipped", OTHER_SHA),
+                "S3": (True, "success", SHA),
             }
         )
         statuses = declaration()
@@ -273,7 +307,7 @@ class SlotGateTest(unittest.TestCase):
             statuses[slot] = {"status": "na", "reason": "not applicable"}
         statuses["S3"] = {"status": "impl"}
         result, _ = run_gate(json.dumps(statuses), states)
-        self.assert_rejected(result, "Commit SHA mismatch between slot S3 and slot S1/S2/L1 host job")
+        self.assert_rejected(result, "Commit SHA mismatch between slot S3 and slot L1 job")
 
     def test_strict_mode_allows_todo_slots(self):
         states = slot_states()

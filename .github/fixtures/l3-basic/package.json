@@ -1,0 +1,9 @@
+{
+  "name": "l3-basic-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "npm@11.19.1",
+  "dependencies": {
+    "playwright": "file:./playwright-stub"
+  }
+}

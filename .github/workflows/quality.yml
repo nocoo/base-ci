@@ -4,6 +4,11 @@
 #   B1 build, L1 unit tests + coverage, L1.5 worker runtime, L2 API E2E, L3 browser E2E,
 #   P1 package check, Z1 gate aggregate.
 #
+# Every slot is a top-level job, so each slot renders exactly one GitHub check named
+# "<ID>: <Canonical Name>" (e.g. "G1: Secret Scan"). quality.yml never calls another
+# reusable workflow; security.yml / workflow-lint.yml / test-job.yml stay intact for
+# direct callers and keep their own job names.
+#
 # Emits tested-sha and artifact outputs only when all enabled checks succeed and tested-sha matches.
 
 name: Quality Gate
@@ -99,6 +104,18 @@ on:
         description: "L2 test command"
         type: string
         default: ""
+      l2-artifact-name:
+        description: "Name of the L2 evidence artifact (empty = no upload)"
+        type: string
+        default: ""
+      l2-artifact-path:
+        description: "Path of the L2 evidence to upload (empty = no upload)"
+        type: string
+        default: ""
+      l2-artifact-retention-days:
+        description: "L2 evidence artifact retention days"
+        type: number
+        default: 7
 
       l3:
         description: "Run L3 Browser E2E tests"
@@ -108,14 +125,34 @@ on:
         description: "L3 test command"
         type: string
         default: ""
+      l3-browsers:
+        description: "Space-separated Playwright browsers to install (preferred over l3-browser)"
+        type: string
+        default: ""
       l3-browser:
-        description: "Playwright browser to install (chromium, firefox, webkit)"
+        description: "Playwright browser to install (chromium, firefox, webkit); ignored when l3-browsers is set"
         type: string
         default: "chromium"
       l3-browser-directory:
         description: "Playwright browser installation directory"
         type: string
         default: ""
+      l3-prepare-command:
+        description: "Optional setup command for L3 (used when set, otherwise prepare-command)"
+        type: string
+        default: ""
+      l3-artifact-name:
+        description: "Name of the L3 evidence artifact (empty = no upload)"
+        type: string
+        default: ""
+      l3-artifact-path:
+        description: "Path of the L3 evidence to upload (multiline allowed, empty = no upload)"
+        type: string
+        default: ""
+      l3-artifact-retention-days:
+        description: "L3 evidence artifact retention days"
+        type: number
+        default: 7
 
       worker:
         description: "Run Cloudflare Worker tests"
@@ -218,10 +255,10 @@ on:
     outputs:
       tested-sha:
         description: "Commit SHA tested and verified across all enabled jobs"
-        value: ${{ jobs.aggregate-gate.outputs.tested-sha }}
+        value: ${{ jobs.z1-gate.outputs.tested-sha }}
       artifact-id:
         description: "Uploaded build artifact ID if artifact-paths was provided"
-        value: ${{ jobs.build.outputs.artifact-id }}
+        value: ${{ jobs.b1-build.outputs.artifact-id }}
 
 concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
@@ -229,16 +266,164 @@ concurrency:
 
 jobs:
   # ─────────────────────────────────────────────────────
-  # Static analysis, L1 unit tests, and coverage
+  # S1: Typecheck (independent slot job)
   # ─────────────────────────────────────────────────────
-  l1-gate:
+  s1-typecheck:
+    name: "S1: Typecheck"
+    if: inputs.typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          env-json: ${{ inputs.env-json }}
+
+      - name: Prepare environment
+        if: inputs.prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.prepare-command }}
+        run: |
+          echo "Executing prepare-command..."
+          bash -euo pipefail -c "$IN_PREPARE"
+
+      - name: "S1: Typecheck"
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.typecheck-command }}
+          PKG_MGR: ${{ inputs.package-manager }}
+        run: |
+          set -euo pipefail
+          CMD="$IN_CMD"
+          if [ -z "$CMD" ]; then
+            if [ "$PKG_MGR" = "bun" ]; then
+              CMD="bun run typecheck"
+            elif [ "$PKG_MGR" = "pnpm" ]; then
+              CMD="pnpm run typecheck"
+            else
+              CMD="npm run typecheck"
+            fi
+          fi
+          TRIMMED="${CMD//[[:space:]]/}"
+          if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
+            echo "::error::Invalid typecheck command '$TRIMMED'. Disable typecheck explicitly with disabled-check-reasons instead of using fake-green commands."
+            exit 1
+          fi
+          echo "Running typecheck: $CMD"
+          bash -euo pipefail -c "$CMD"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────
+  # S2: Lint (independent slot job)
+  # ─────────────────────────────────────────────────────
+  s2-lint:
+    name: "S2: Lint"
+    if: inputs.lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          env-json: ${{ inputs.env-json }}
+
+      - name: Prepare environment
+        if: inputs.prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.prepare-command }}
+        run: |
+          echo "Executing prepare-command..."
+          bash -euo pipefail -c "$IN_PREPARE"
+
+      - name: "S2: Lint"
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.lint-command }}
+          PKG_MGR: ${{ inputs.package-manager }}
+        run: |
+          set -euo pipefail
+          CMD="$IN_CMD"
+          if [ -z "$CMD" ]; then
+            if [ "$PKG_MGR" = "bun" ]; then
+              CMD="bun run lint"
+            elif [ "$PKG_MGR" = "pnpm" ]; then
+              CMD="pnpm run lint"
+            else
+              CMD="npm run lint"
+            fi
+          fi
+          TRIMMED="${CMD//[[:space:]]/}"
+          if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
+            echo "::error::Invalid lint command '$TRIMMED'. Disable lint explicitly with disabled-check-reasons instead of using fake-green commands."
+            exit 1
+          fi
+          echo "Running lint: $CMD"
+          bash -euo pipefail -c "$CMD"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────
+  # L1: Unit tests + coverage. The job always runs so it can
+  # validate disabled-check-reasons; the unit step itself is
+  # skipped when the slot is disabled.
+  # ─────────────────────────────────────────────────────
+  l1-unit-tests:
     name: "L1: Unit Tests & Coverage"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       tested-sha: ${{ steps.record-sha.outputs.sha }}
-      s1-typecheck: ${{ steps.s1-typecheck.outcome }}
-      s2-lint: ${{ steps.s2-lint.outcome }}
       l1-unit: ${{ steps.l1-unit.outcome }}
     steps:
       - name: Checkout repository
@@ -304,62 +489,6 @@ jobs:
           echo "Executing prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
-      - name: "S1: Typecheck"
-        id: s1-typecheck
-        if: inputs.typecheck
-        shell: bash
-        working-directory: ${{ inputs.working-directory }}
-        env:
-          IN_CMD: ${{ inputs.typecheck-command }}
-          PKG_MGR: ${{ inputs.package-manager }}
-        run: |
-          set -euo pipefail
-          CMD="$IN_CMD"
-          if [ -z "$CMD" ]; then
-            if [ "$PKG_MGR" = "bun" ]; then
-              CMD="bun run typecheck"
-            elif [ "$PKG_MGR" = "pnpm" ]; then
-              CMD="pnpm run typecheck"
-            else
-              CMD="npm run typecheck"
-            fi
-          fi
-          TRIMMED="${CMD//[[:space:]]/}"
-          if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
-            echo "::error::Invalid typecheck command '$TRIMMED'. Disable typecheck explicitly with disabled-check-reasons instead of using fake-green commands."
-            exit 1
-          fi
-          echo "Running typecheck: $CMD"
-          bash -euo pipefail -c "$CMD"
-
-      - name: "S2: Lint"
-        id: s2-lint
-        if: inputs.lint
-        shell: bash
-        working-directory: ${{ inputs.working-directory }}
-        env:
-          IN_CMD: ${{ inputs.lint-command }}
-          PKG_MGR: ${{ inputs.package-manager }}
-        run: |
-          set -euo pipefail
-          CMD="$IN_CMD"
-          if [ -z "$CMD" ]; then
-            if [ "$PKG_MGR" = "bun" ]; then
-              CMD="bun run lint"
-            elif [ "$PKG_MGR" = "pnpm" ]; then
-              CMD="pnpm run lint"
-            else
-              CMD="npm run lint"
-            fi
-          fi
-          TRIMMED="${CMD//[[:space:]]/}"
-          if [ -z "$TRIMMED" ] || [ "$TRIMMED" = "true" ] || [ "$TRIMMED" = ":" ]; then
-            echo "::error::Invalid lint command '$TRIMMED'. Disable lint explicitly with disabled-check-reasons instead of using fake-green commands."
-            exit 1
-          fi
-          echo "Running lint: $CMD"
-          bash -euo pipefail -c "$CMD"
-
       - name: "L1: Unit Tests & Coverage"
         id: l1-unit
         if: inputs.unit
@@ -399,6 +528,7 @@ jobs:
 
       - name: Record SHA
         id: record-sha
+        if: always()
         shell: bash
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -406,63 +536,224 @@ jobs:
   # ─────────────────────────────────────────────────────
   # S3: Workflow lint (optional)
   # ─────────────────────────────────────────────────────
-  s3-gate:
+  s3-workflow-lint:
     name: "S3: Workflow Lint"
     if: inputs.workflow-lint
-    uses: ./.github/workflows/workflow-lint.yml
-    with:
-      files: ${{ inputs.workflow-lint-files }}
-      required-reusable-workflow: ${{ inputs.workflow-lint-required-workflow }}
-      yamllint: ${{ inputs.workflow-lint-yamllint }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install verified actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+
+      - name: Validate workflow syntax
+        shell: bash
+        env:
+          WORKFLOW_FILES: ${{ inputs.workflow-lint-files }}
+        run: |
+          set -euo pipefail
+          read -r -a files <<< "$WORKFLOW_FILES"
+          if [ "${#files[@]}" -eq 0 ]; then
+            "$RUNNER_TEMP/actionlint"
+          else
+            "$RUNNER_TEMP/actionlint" "${files[@]}"
+          fi
+
+      - name: Check immutable shared workflow references
+        shell: bash
+        env:
+          WORKFLOW_FILES: ${{ inputs.workflow-lint-files }}
+          REQUIRED_WORKFLOW: ${{ inputs.workflow-lint-required-workflow }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re, yaml
+          files = os.environ['WORKFLOW_FILES'].split() or list(pathlib.Path('.github/workflows').glob('*.y*ml'))
+          references = []
+          for path in files:
+              data = yaml.safe_load(pathlib.Path(path).read_text())
+              for job in data.get('jobs', {}).values():
+                  references.extend(item['uses'] for item in [job, *job.get('steps', [])] if 'uses' in item)
+          for ref in references:
+              if ref.startswith('nocoo/base-ci/') and not re.fullmatch(r'nocoo/base-ci/[^@]+@[a-f0-9]{40}', ref):
+                  raise SystemExit(f'Shared CI reference must use a full commit SHA: {ref}')
+          required = os.environ['REQUIRED_WORKFLOW']
+          if required and not any(ref.startswith(required + '@') for ref in references):
+              raise SystemExit(f'Missing required reusable workflow: {required}')
+          print(f'Validated {len(files)} workflow files and immutable base-ci references')
+          PY
+
+      - name: Check YAML style
+        if: inputs.workflow-lint-yamllint
+        shell: bash
+        env:
+          WORKFLOW_FILES: ${{ inputs.workflow-lint-files }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'yamllint==1.38.0'
+          read -r -a files <<< "$WORKFLOW_FILES"
+          if [ "${#files[@]}" = 0 ]; then files=(.github/workflows/*.yml); fi
+          yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' "${files[@]}"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # G1: Secret scan (invoking nested reusable workflow)
+  # G1: Secret scan
   # ─────────────────────────────────────────────────────
-  g1-gate:
+  g1-secret-scan:
     name: "G1: Secret Scan"
     if: inputs.security
-    uses: ./.github/workflows/security.yml
-    with:
-      working-directory: ${{ inputs.working-directory }}
-      package-manager: ${{ inputs.security-command != '' && inputs.package-manager || 'none' }}
-      runtime-version: ${{ inputs.runtime-version }}
-      node-version: ${{ inputs.node-version }}
-      install-policy: ${{ inputs.install-policy }}
-      extra-install-dirs: ${{ inputs.extra-install-dirs }}
-      lockfiles: ${{ inputs.lockfiles != '' && inputs.lockfiles || (inputs.package-manager == 'bun' && 'bun.lock' || (inputs.package-manager == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json')) }}
-      osv-config: ${{ inputs.osv-config }}
-      gitleaks-config: ${{ inputs.gitleaks-config }}
-      gitleaks-ignore-path: ${{ inputs.gitleaks-ignore-path }}
-      security-command: ${{ inputs.security-command }}
-      scan-secrets: true
-      scan-dependencies: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup JS and dependencies (if security-command requires runtime)
+        if: inputs.security-command != ''
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Install security scanners (gitleaks + osv-scanner)
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@2231caf82cf16f103f48cab467b3464b106d6604
+
+      - name: "G1: Gitleaks Secret Scan"
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_GITLEAKS_CONFIG: ${{ inputs.gitleaks-config }}
+          IN_GITLEAKS_IGNORE: ${{ inputs.gitleaks-ignore-path }}
+        run: |
+          set -euo pipefail
+          GITLEAKS_ARGS=(detect --no-banner --verbose --redact --no-git)
+          if [ -n "$IN_GITLEAKS_CONFIG" ]; then
+            GITLEAKS_ARGS+=(--config="$IN_GITLEAKS_CONFIG")
+          elif [ -f ".gitleaks.toml" ]; then
+            GITLEAKS_ARGS+=(--config=.gitleaks.toml)
+          fi
+          if [ -n "$IN_GITLEAKS_IGNORE" ]; then
+            GITLEAKS_ARGS+=(--gitleaks-ignore-path="$IN_GITLEAKS_IGNORE")
+          elif [ -f ".gitleaksignore" ]; then
+            GITLEAKS_ARGS+=(--gitleaks-ignore-path=.gitleaksignore)
+          fi
+          echo "Running gitleaks with args: ${GITLEAKS_ARGS[*]}"
+          gitleaks "${GITLEAKS_ARGS[@]}"
+
+      - name: Custom security command
+        if: inputs.security-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_SEC_CMD: ${{ inputs.security-command }}
+          CI: "true"
+        run: |
+          echo "Running custom security command..."
+          bash -euo pipefail -c "$IN_SEC_CMD"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # G2: Dependency vulnerabilities (invoking nested reusable workflow)
+  # G2: Dependency vulnerabilities
   # ─────────────────────────────────────────────────────
-  g2-gate:
+  g2-dependency-vulnerabilities:
     name: "G2: Dependency Vulnerabilities"
     if: inputs.security
-    uses: ./.github/workflows/security.yml
-    with:
-      working-directory: ${{ inputs.working-directory }}
-      package-manager: 'none'
-      runtime-version: ${{ inputs.runtime-version }}
-      node-version: ${{ inputs.node-version }}
-      install-policy: ${{ inputs.install-policy }}
-      extra-install-dirs: ${{ inputs.extra-install-dirs }}
-      lockfiles: ${{ inputs.lockfiles != '' && inputs.lockfiles || (inputs.package-manager == 'bun' && 'bun.lock' || (inputs.package-manager == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json')) }}
-      osv-config: ${{ inputs.osv-config }}
-      gitleaks-config: ${{ inputs.gitleaks-config }}
-      gitleaks-ignore-path: ${{ inputs.gitleaks-ignore-path }}
-      security-command: ''
-      scan-secrets: false
-      scan-dependencies: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install security scanners (gitleaks + osv-scanner)
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@2231caf82cf16f103f48cab467b3464b106d6604
+
+      - name: "G2: OSV Dependency Scan"
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_LOCKFILES: ${{ inputs.lockfiles != '' && inputs.lockfiles || (inputs.package-manager == 'bun' && 'bun.lock' || (inputs.package-manager == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json')) }}
+          IN_OSV_CONFIG: ${{ inputs.osv-config }}
+        run: |
+          set -euo pipefail
+
+          LOCKFILES=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            TRIMMED="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -n "$TRIMMED" ]; then
+              LOCKFILES+=("$TRIMMED")
+            fi
+          done < <(printf '%s\n' "$IN_LOCKFILES" | tr ',' '\n')
+
+          if [ ${#LOCKFILES[@]} -eq 0 ]; then
+            echo "::error::No lockfiles specified for OSV scan."
+            exit 1
+          fi
+
+          for lf in "${LOCKFILES[@]}"; do
+            if [ ! -f "$lf" ]; then
+              echo "::error::Lockfile '$lf' does not exist."
+              exit 1
+            fi
+            echo "::group::Scanning lockfile: $lf"
+            if [ -n "$IN_OSV_CONFIG" ]; then
+              osv-scanner scan --lockfile="$lf" --config="$IN_OSV_CONFIG"
+            else
+              osv-scanner scan --lockfile="$lf"
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # Build step (optional)
+  # B1: Build (optional)
   # ─────────────────────────────────────────────────────
-  build:
+  b1-build:
     name: "B1: Build"
     if: inputs.build
     runs-on: ubuntu-latest
@@ -534,103 +825,295 @@ jobs:
 
       - name: Record SHA
         id: record-sha
+        if: always()
         shell: bash
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # L2 API E2E (optional)
+  # L2: API E2E (optional)
   # ─────────────────────────────────────────────────────
-  l2-gate:
+  l2-api-e2e:
     name: "L2: API E2E"
     if: inputs.l2
-    uses: ./.github/workflows/test-job.yml
-    with:
-      slot-label: "L2: API E2E"
-      runtime: ${{ inputs.package-manager }}
-      runtime-version: ${{ inputs.runtime-version }}
-      node-version: ${{ inputs.node-version }}
-      working-directory: ${{ inputs.working-directory }}
-      install-policy: ${{ inputs.install-policy }}
-      extra-install-dirs: ${{ inputs.extra-install-dirs }}
-      pre-command: ${{ inputs.prepare-command }}
-      command: ${{ inputs.l2-command != '' && inputs.l2-command || (inputs.package-manager == 'bun' && 'bun run test:api' || 'npm run test:api') }}
-      env-json: ${{ inputs.env-json }}
-    secrets:
-      test-env-json: ${{ secrets.test-env-json }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          env-json: ${{ inputs.env-json }}
+          secret-env-json: ${{ secrets.test-env-json }}
+
+      - name: Prepare environment
+        if: inputs.prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.prepare-command }}
+        run: |
+          echo "Executing prepare-command..."
+          bash -euo pipefail -c "$IN_PREPARE"
+
+      - name: "L2: API E2E"
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.l2-command != '' && inputs.l2-command || (inputs.package-manager == 'bun' && 'bun run test:api' || 'npm run test:api') }}
+        run: |
+          set -euo pipefail
+          echo "Running L2 API E2E: $IN_CMD"
+          bash -euo pipefail -c "$IN_CMD"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload L2 evidence
+        if: always() && inputs.l2-artifact-name != '' && inputs.l2-artifact-path != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.l2-artifact-name }}
+          path: ${{ inputs.l2-artifact-path }}
+          retention-days: ${{ inputs.l2-artifact-retention-days }}
+          if-no-files-found: error
 
   # ─────────────────────────────────────────────────────
-  # L3 Browser E2E with Playwright (optional)
+  # L3: Browser E2E with Playwright (optional)
   # ─────────────────────────────────────────────────────
-  l3-gate:
+  l3-browser-e2e:
     name: "L3: Browser E2E"
     if: inputs.l3
-    uses: ./.github/workflows/test-job.yml
-    with:
-      slot-label: "L3: Browser E2E"
-      runtime: ${{ inputs.package-manager }}
-      runtime-version: ${{ inputs.runtime-version }}
-      node-version: ${{ inputs.node-version }}
-      working-directory: ${{ inputs.working-directory }}
-      install-policy: ${{ inputs.install-policy }}
-      extra-install-dirs: ${{ inputs.extra-install-dirs }}
-      browser: ${{ inputs.l3-browser }}
-      browser-working-directory: ${{ inputs.l3-browser-directory != '' && inputs.l3-browser-directory || inputs.working-directory }}
-      pre-command: ${{ inputs.prepare-command }}
-      command: ${{ inputs.l3-command != '' && inputs.l3-command || (inputs.package-manager == 'bun' && 'bun run test:e2e:pw' || 'npm run test:e2e:pw') }}
-      env-json: ${{ inputs.env-json }}
-    secrets:
-      test-env-json: ${{ secrets.test-env-json }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          env-json: ${{ inputs.env-json }}
+          secret-env-json: ${{ secrets.test-env-json }}
+
+      - name: Prepare environment
+        if: inputs.l3-prepare-command != '' || inputs.prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.l3-prepare-command != '' && inputs.l3-prepare-command || inputs.prepare-command }}
+        run: |
+          echo "Executing L3 prepare-command..."
+          bash -euo pipefail -c "$IN_PREPARE"
+
+      - name: Install Playwright browsers
+        if: inputs.l3-browsers != '' || inputs.l3-browser != ''
+        shell: bash
+        working-directory: ${{ inputs.l3-browser-directory != '' && inputs.l3-browser-directory || inputs.working-directory }}
+        env:
+          IN_BROWSERS: ${{ inputs.l3-browsers != '' && inputs.l3-browsers || inputs.l3-browser }}
+          PKG_MGR: ${{ inputs.package-manager }}
+        run: |
+          set -euo pipefail
+          read -r -a BROWSERS <<< "$IN_BROWSERS"
+          if [ "${#BROWSERS[@]}" -eq 0 ]; then
+            echo "::error::No Playwright browser requested."
+            exit 1
+          fi
+          echo "Installing Playwright browsers: ${BROWSERS[*]}"
+          if [ "$PKG_MGR" = "bun" ]; then
+            bunx playwright install --with-deps "${BROWSERS[@]}"
+          elif [ "$PKG_MGR" = "pnpm" ]; then
+            pnpm exec playwright install --with-deps "${BROWSERS[@]}"
+          else
+            npx playwright install --with-deps "${BROWSERS[@]}"
+          fi
+
+      - name: "L3: Browser E2E"
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.l3-command != '' && inputs.l3-command || (inputs.package-manager == 'bun' && 'bun run test:e2e:pw' || 'npm run test:e2e:pw') }}
+        run: |
+          set -euo pipefail
+          echo "Running L3 browser E2E: $IN_CMD"
+          bash -euo pipefail -c "$IN_CMD"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload L3 evidence
+        if: always() && inputs.l3-artifact-name != '' && inputs.l3-artifact-path != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.l3-artifact-name }}
+          path: ${{ inputs.l3-artifact-path }}
+          retention-days: ${{ inputs.l3-artifact-retention-days }}
+          if-no-files-found: error
 
   # ─────────────────────────────────────────────────────
-  # Worker tests (optional)
+  # L1.5: Worker runtime tests (optional)
   # ─────────────────────────────────────────────────────
-  worker-gate:
+  l15-worker-runtime:
     name: "L1.5: Worker Runtime Tests"
     if: inputs.worker
-    uses: ./.github/workflows/test-job.yml
-    with:
-      slot-label: "L1.5: Worker Runtime Tests"
-      runtime: ${{ inputs.package-manager }}
-      runtime-version: ${{ inputs.runtime-version }}
-      node-version: ${{ inputs.node-version }}
-      working-directory: ${{ inputs.worker-directory }}
-      install-policy: ${{ inputs.install-policy }}
-      extra-install-dirs: ${{ inputs.extra-install-dirs }}
-      pre-command: ${{ inputs.worker-prepare-command }}
-      command: ${{ inputs.worker-command != '' && inputs.worker-command || (inputs.package-manager == 'bun' && 'bun run test' || 'npm run test') }}
-      env-json: ${{ inputs.env-json }}
-    secrets:
-      test-env-json: ${{ secrets.test-env-json }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.worker-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          env-json: ${{ inputs.env-json }}
+          secret-env-json: ${{ secrets.test-env-json }}
+
+      - name: Prepare environment
+        if: inputs.worker-prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.worker-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.worker-prepare-command }}
+        run: |
+          echo "Executing worker-prepare-command..."
+          bash -euo pipefail -c "$IN_PREPARE"
+
+      - name: "L1.5: Worker Runtime Tests"
+        shell: bash
+        working-directory: ${{ inputs.worker-directory }}
+        env:
+          IN_CMD: ${{ inputs.worker-command != '' && inputs.worker-command || (inputs.package-manager == 'bun' && 'bun run test' || 'npm run test') }}
+        run: |
+          set -euo pipefail
+          echo "Running worker runtime tests: $IN_CMD"
+          bash -euo pipefail -c "$IN_CMD"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # Package validation check (optional)
+  # P1: Package check (optional)
   # ─────────────────────────────────────────────────────
-  package-gate:
+  p1-package-check:
     name: "P1: Package Check"
     if: inputs.package-check
-    uses: ./.github/workflows/test-job.yml
-    with:
-      slot-label: "P1: Package Check"
-      runtime: ${{ inputs.package-manager }}
-      runtime-version: ${{ inputs.runtime-version }}
-      node-version: ${{ inputs.node-version }}
-      working-directory: ${{ inputs.working-directory }}
-      install-policy: ${{ inputs.install-policy }}
-      extra-install-dirs: ${{ inputs.extra-install-dirs }}
-      pre-command: ${{ inputs.prepare-command }}
-      command: ${{ inputs.package-command != '' && inputs.package-command || (inputs.package-manager == 'bun' && 'bun run ci:package' || 'npm run ci:package') }}
-      env-json: ${{ inputs.env-json }}
-    secrets:
-      test-env-json: ${{ secrets.test-env-json }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JS and dependencies
+        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          package-manager: ${{ inputs.package-manager }}
+          runtime-version: ${{ inputs.runtime-version }}
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          install-policy: ${{ inputs.install-policy }}
+          extra-install-dirs: ${{ inputs.extra-install-dirs }}
+
+      - name: Configure test environment
+        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        with:
+          env-json: ${{ inputs.env-json }}
+          secret-env-json: ${{ secrets.test-env-json }}
+
+      - name: Prepare environment
+        if: inputs.prepare-command != ''
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_PREPARE: ${{ inputs.prepare-command }}
+        run: |
+          echo "Executing prepare-command..."
+          bash -euo pipefail -c "$IN_PREPARE"
+
+      - name: "P1: Package Check"
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          IN_CMD: ${{ inputs.package-command != '' && inputs.package-command || (inputs.package-manager == 'bun' && 'bun run ci:package' || 'npm run ci:package') }}
+        run: |
+          set -euo pipefail
+          echo "Running package check: $IN_CMD"
+          bash -euo pipefail -c "$IN_CMD"
+
+      - name: Record SHA
+        id: record-sha
+        if: always()
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # Z1 Gate: verifies the slot declarations against the jobs and
-  # steps that actually ran, then emits the shared tested SHA
+  # Z1 Gate: verifies the slot declarations against the jobs
+  # that actually ran, then emits the shared tested SHA
   # ─────────────────────────────────────────────────────
-  aggregate-gate:
+  z1-gate:
     name: "Z1: Gate"
-    needs: [l1-gate, s3-gate, g1-gate, g2-gate, build, l2-gate, l3-gate, worker-gate, package-gate]
+    needs: [s1-typecheck, s2-lint, s3-workflow-lint, g1-secret-scan, g2-dependency-vulnerabilities, b1-build, l1-unit-tests, l15-worker-runtime, l2-api-e2e, l3-browser-e2e, p1-package-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -647,38 +1130,40 @@ jobs:
         shell: bash
         env:
           SLOT_STATUS: ${{ inputs.slot-status }}
-          SLOT_HOST_RESULT: ${{ needs.l1-gate.result }}
-          SLOT_HOST_SHA: ${{ needs.l1-gate.outputs.tested-sha }}
           SLOT_S1_ENABLED: ${{ inputs.typecheck }}
-          SLOT_S1_OUTCOME: ${{ needs.l1-gate.outputs.s1-typecheck }}
+          SLOT_S1_OUTCOME: ${{ needs.s1-typecheck.result }}
+          SLOT_S1_SHA: ${{ needs.s1-typecheck.outputs.tested-sha }}
           SLOT_S2_ENABLED: ${{ inputs.lint }}
-          SLOT_S2_OUTCOME: ${{ needs.l1-gate.outputs.s2-lint }}
-          SLOT_L1_ENABLED: ${{ inputs.unit }}
-          SLOT_L1_OUTCOME: ${{ needs.l1-gate.outputs.l1-unit }}
+          SLOT_S2_OUTCOME: ${{ needs.s2-lint.result }}
+          SLOT_S2_SHA: ${{ needs.s2-lint.outputs.tested-sha }}
           SLOT_S3_ENABLED: ${{ inputs.workflow-lint }}
-          SLOT_S3_OUTCOME: ${{ needs.s3-gate.result }}
-          SLOT_S3_SHA: ${{ needs.s3-gate.outputs.tested-sha }}
+          SLOT_S3_OUTCOME: ${{ needs.s3-workflow-lint.result }}
+          SLOT_S3_SHA: ${{ needs.s3-workflow-lint.outputs.tested-sha }}
           SLOT_G1_ENABLED: ${{ inputs.security }}
-          SLOT_G1_OUTCOME: ${{ needs.g1-gate.result }}
-          SLOT_G1_SHA: ${{ needs.g1-gate.outputs.tested-sha }}
+          SLOT_G1_OUTCOME: ${{ needs.g1-secret-scan.result }}
+          SLOT_G1_SHA: ${{ needs.g1-secret-scan.outputs.tested-sha }}
           SLOT_G2_ENABLED: ${{ inputs.security }}
-          SLOT_G2_OUTCOME: ${{ needs.g2-gate.result }}
-          SLOT_G2_SHA: ${{ needs.g2-gate.outputs.tested-sha }}
+          SLOT_G2_OUTCOME: ${{ needs.g2-dependency-vulnerabilities.result }}
+          SLOT_G2_SHA: ${{ needs.g2-dependency-vulnerabilities.outputs.tested-sha }}
           SLOT_B1_ENABLED: ${{ inputs.build }}
-          SLOT_B1_OUTCOME: ${{ needs.build.result }}
-          SLOT_B1_SHA: ${{ needs.build.outputs.tested-sha }}
+          SLOT_B1_OUTCOME: ${{ needs.b1-build.result }}
+          SLOT_B1_SHA: ${{ needs.b1-build.outputs.tested-sha }}
+          SLOT_L1_ENABLED: ${{ inputs.unit }}
+          SLOT_L1_OUTCOME: ${{ needs.l1-unit-tests.outputs.l1-unit }}
+          SLOT_L1_SHA: ${{ needs.l1-unit-tests.outputs.tested-sha }}
+          SLOT_L1_JOB_RESULT: ${{ needs.l1-unit-tests.result }}
           SLOT_L15_ENABLED: ${{ inputs.worker }}
-          SLOT_L15_OUTCOME: ${{ needs.worker-gate.result }}
-          SLOT_L15_SHA: ${{ needs.worker-gate.outputs.tested-sha }}
+          SLOT_L15_OUTCOME: ${{ needs.l15-worker-runtime.result }}
+          SLOT_L15_SHA: ${{ needs.l15-worker-runtime.outputs.tested-sha }}
           SLOT_L2_ENABLED: ${{ inputs.l2 }}
-          SLOT_L2_OUTCOME: ${{ needs.l2-gate.result }}
-          SLOT_L2_SHA: ${{ needs.l2-gate.outputs.tested-sha }}
+          SLOT_L2_OUTCOME: ${{ needs.l2-api-e2e.result }}
+          SLOT_L2_SHA: ${{ needs.l2-api-e2e.outputs.tested-sha }}
           SLOT_L3_ENABLED: ${{ inputs.l3 }}
-          SLOT_L3_OUTCOME: ${{ needs.l3-gate.result }}
-          SLOT_L3_SHA: ${{ needs.l3-gate.outputs.tested-sha }}
+          SLOT_L3_OUTCOME: ${{ needs.l3-browser-e2e.result }}
+          SLOT_L3_SHA: ${{ needs.l3-browser-e2e.outputs.tested-sha }}
           SLOT_P1_ENABLED: ${{ inputs.package-check }}
-          SLOT_P1_OUTCOME: ${{ needs.package-gate.result }}
-          SLOT_P1_SHA: ${{ needs.package-gate.outputs.tested-sha }}
+          SLOT_P1_OUTCOME: ${{ needs.p1-package-check.result }}
+          SLOT_P1_SHA: ${{ needs.p1-package-check.outputs.tested-sha }}
         run: |
           set -euo pipefail
 
@@ -689,8 +1174,19 @@ jobs:
           import sys
 
           SLOT_IDS = ["S1", "S2", "S3", "G1", "G2", "B1", "L1", "L1.5", "L2", "L3", "P1", "Z1"]
-          STEP_SLOTS = {"S1": "S1", "S2": "S2", "L1": "L1"}
-          JOB_SLOTS = {"S3": "S3", "G1": "G1", "G2": "G2", "B1": "B1", "L1.5": "L15", "L2": "L2", "L3": "L3", "P1": "P1"}
+          SLOT_KEYS = {
+              "S1": "S1",
+              "S2": "S2",
+              "S3": "S3",
+              "G1": "G1",
+              "G2": "G2",
+              "B1": "B1",
+              "L1": "L1",
+              "L1.5": "L15",
+              "L2": "L2",
+              "L3": "L3",
+              "P1": "P1",
+          }
           VALID_STATUSES = ("impl", "na", "todo")
 
 
@@ -705,27 +1201,24 @@ jobs:
                   if slot == "Z1":
                       slots[slot] = {"enabled": True, "outcome": "success", "sha": ""}
                       continue
-                  key = STEP_SLOTS.get(slot) or JOB_SLOTS[slot]
+                  key = SLOT_KEYS[slot]
                   enabled = os.environ.get(f"SLOT_{key}_ENABLED", "")
                   outcome = os.environ.get(f"SLOT_{key}_OUTCOME", "") or "not_run"
-                  if slot in STEP_SLOTS:
-                      sha = os.environ.get("SLOT_HOST_SHA", "")
-                  else:
-                      sha = os.environ.get(f"SLOT_{key}_SHA", "")
+                  sha = os.environ.get(f"SLOT_{key}_SHA", "")
                   slots[slot] = {"enabled": enabled == "true", "outcome": outcome, "sha": sha}
               return slots
 
 
-          def require_host_job():
-              result = os.environ.get("SLOT_HOST_RESULT", "")
+          def require_l1_job():
+              result = os.environ.get("SLOT_L1_JOB_RESULT", "")
               if result != "success":
-                  fail(f"The job hosting S1/S2/L1 finished with result '{result}'")
-              if not os.environ.get("SLOT_HOST_SHA", ""):
-                  fail("The job hosting S1/S2/L1 did not report a tested SHA")
+                  fail(f"The L1 job finished with result '{result}'")
+              if not os.environ.get("SLOT_L1_SHA", ""):
+                  fail("The L1 job did not report a tested SHA")
 
 
           def verify_legacy(slots):
-              require_host_job()
+              require_l1_job()
               verified = []
               for slot in SLOT_IDS:
                   if slot == "Z1":
@@ -739,12 +1232,12 @@ jobs:
                       verified.append((slot, state["sha"]))
                   elif state["outcome"] not in ("skipped", "not_run"):
                       fail(f"Disabled slot {slot} was not skipped (outcome '{state['outcome']}')")
-              verified.append(("S1/S2/L1 host job", os.environ["SLOT_HOST_SHA"]))
+              verified.append(("L1 job", os.environ["SLOT_L1_SHA"]))
               return verified
 
 
           def verify_strict(raw, slots):
-              require_host_job()
+              require_l1_job()
               try:
                   declarations = json.loads(raw)
               except json.JSONDecodeError as exc:
@@ -791,7 +1284,7 @@ jobs:
                           fail(f"Slot {slot} is declared {status} but its job or step ran with outcome '{state['outcome']}'")
               if not verified:
                   fail("slot-status declares no implemented slot besides Z1")
-              verified.append(("S1/S2/L1 host job", os.environ["SLOT_HOST_SHA"]))
+              verified.append(("L1 job", os.environ["SLOT_L1_SHA"]))
               return verified
 
 

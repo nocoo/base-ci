@@ -154,7 +154,7 @@ For a cf-only project, replace the Wrangler inputs with:
 with:
   source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
   package-manager: npm
-  node-version: '22.23.4'
+  node-version: '26.12.1'
   deploy-cli: cf
   cf-version: '1.0.0-beta.12'
   build-command: npm run build

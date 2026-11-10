@@ -50,7 +50,7 @@ Commands default to the selected package manager's `run typecheck`, `run lint`, 
 
 `prepare-command` runs before checks in each relevant isolated job. Use it when tests need a built library. Enabling the separate `build` job does not put its output in other jobs. Worker preparation is separate: `worker-prepare-command` defaults to empty.
 
-`quality.yml` runs every slot as its own top-level job: `S1: Typecheck`, `S2: Lint`, `S3: Workflow Lint`, `G1: Secret Scan`, `G2: Dependency Vulnerabilities`, `B1: Build`, `L1: Unit Tests & Coverage`, `L1.5: Worker Runtime Tests`, `L2: API E2E`, `L3: Browser E2E`, `P1: Package Check` and `Z1: Gate`. Typecheck and lint are independent jobs with their own check, duration and tested SHA. The `L1: Unit Tests & Coverage` job always runs so it can validate `disabled-check-reasons`; its unit step is skipped when `unit` is false.
+`quality.yml` runs every slot as its own top-level job: `S1: Typecheck`, `S2: Lint`, `S3: Workflow Lint`, `G1: Secret Scan`, `G2: Dependency Vulnerabilities`, `B1: Build`, `L1: Unit Tests & Coverage`, `L1.5: Worker Runtime Tests`, `L2: API E2E`, `L3: Browser E2E`, `P1: Package Check` and `Z1: Gate`. Typecheck and lint are independent jobs with their own check, duration and tested SHA. The `L1: Unit Tests & Coverage` job always runs so it can validate `disabled-check-reasons`; its unit step is skipped when `unit` is false. No slot job uses `strategy.matrix`, so a check name stays exactly `quality / <ID>: <Name>`; several apps or architectures are built or tested serially inside one slot job.
 
 `coverage-path` is explicitly opt-in. It must point to a real report, relative to the repository root. A requested missing report fails the job. Build artifacts use `artifact-name` and `artifact-paths`. The successful aggregate emits `tested-sha` only after every enabled job succeeds and reports the same checked out commit.
 
@@ -117,11 +117,13 @@ jobs:
 
 `slot-status` is a declaration only. It never turns a check on: every `impl` slot still needs its boolean input (`typecheck`, `lint`, `unit`, `security`, `workflow-lint`, `build`, `worker`, `l2`, `l3`, `package-check`) enabled, and every `na` / `todo` slot needs its input left off.
 
+`workflow-lint-required-workflow` holds a single reusable workflow reference. The S3 job only checks that some `uses:` starts with that value plus `@`, so one `quality.yml` call cannot require two reusable workflows at once; multi-value support is a follow-up.
+
 `na` and `todo` need a non-empty reason. `impl` must match reality: the slot has to be enabled, run and report the same `tested-sha` as every other implemented slot. The full rules, the old input mapping and the migration steps live in the [slot standard](slots.md).
 
-The slot renames change the required check names in branch protection: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. Since v2026.12 every slot of `quality.yml` is a top-level job, so the check names have no duplicated segment and no runtime suffix any more: `quality / L3: Browser E2E` instead of `quality / L3: Browser E2E / L3: Browser E2E (bun on ubuntu-latest)`. Typecheck and lint are separate checks again: `quality / S1: Typecheck` and `quality / S2: Lint`. A standalone `security.yml` call is named `G1 + G2: Security Scan` and a standalone `workflow-lint.yml` call is named `S3: Workflow Lint`. Release source proof does not depend on job names.
+The slot renames change the job titles behind branch protection, not the complete check-run names: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. The check-run name that branch protection accepts carries the caller prefix: `quality / Z1: Gate`, not the bare job title `Z1: Gate`. Since v2026.12 every slot of `quality.yml` is a top-level job, so the check names have no duplicated segment and no runtime suffix any more: `quality / L3: Browser E2E` instead of `quality / L3: Browser E2E / L3: Browser E2E (bun on ubuntu-latest)`. Typecheck and lint are separate checks again: `quality / S1: Typecheck` and `quality / S2: Lint`. A standalone `security.yml` call is named `G1 + G2: Security Scan` and a standalone `workflow-lint.yml` call is named `S3: Workflow Lint`. Release source proof does not depend on job names.
 
-GitHub prefixes the required check name with the caller job, so the displayed name depends on how the consumer calls the workflow. Upgrade first, read the real name from a CI run, and only then update branch protection — do not guess it. Requiring only `Z1: Gate` is enough: the gate already verifies the declarations, the enabled slots and their tested SHA.
+GitHub prefixes the required check name with the caller job, so the displayed name depends on how the consumer calls the workflow. The prefix is the caller job's display name: its `name:` when set, otherwise its job key. Keep the caller job key `quality` and either omit `jobs.quality.name` or set it exactly to `quality`, otherwise the prefix changes (for example `CI / Z1: Gate`). The workflow `name:` is only a UI grouping and is not part of the check name. Upgrade first, read the real name from a CI run, and only then update branch protection — do not guess it. Requiring only `quality / Z1: Gate` is enough: the gate already verifies the declarations, the enabled slots and their tested SHA. `Z1: Gate` on its own is the job title, not the check name that branch protection accepts.
 
 ## Runtime and installation policy
 
@@ -141,6 +143,14 @@ GitHub prefixes the required check name with the caller job, so the displayed na
 The installer verifies the actual package manager version in every install directory. Explicit pnpm versions cannot silently switch to a different `packageManager` value. Every install requires a committed lockfile; an absent lockfile is a configuration error. Paths cannot escape the checkout through traversal or symlinks.
 
 Existing applications may deliberately pin earlier supported versions, such as Bun 1.2.15 or a Node LTS release. Updating the shared workflow reference does not require changing those application runtimes.
+
+### Install retries
+
+`setup-js` performs exactly one frozen install per directory (`bun install --frozen-lockfile`, `npm ci` or `pnpm install --frozen-lockfile`) and does not retry it, so a flaky registry fetch fails the whole slot job.
+
+- `env-json` values such as `NPM_CONFIG_FETCH_RETRIES`, `NPM_CONFIG_FETCH_RETRY_MINTIMEOUT`, `NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT`, `NPM_CONFIG_FETCH_TIMEOUT` and `NPM_CONFIG_MAXSOCKETS` (his.fm) only reach the steps that run after `configure-env`. In `quality.yml` the `configure-env` step runs **after** `setup-js`, so those variables do **not** affect the first install — they apply to later commands only. This is a current limitation, not a working mitigation.
+- The install-side workaround today is the project `.npmrc`, which npm reads during `npm ci`, for example `fetch-retries=10`, `fetch-retry-mintimeout=20000`, `fetch-retry-maxtimeout=120000` and `fetch-timeout=300000`.
+- A built-in retry in `setup-js`, or an input that is applied before the install, is a follow-up and is not implemented yet.
 
 ## Native jobs and browser tests
 
@@ -164,6 +174,8 @@ jobs:
 ```
 
 With `runtime: none`, Node or Python can be selected without installing JS packages. Swift, Rust and Go projects can retain their platform/toolchain steps and reuse the [setup-js composite](../.github/actions/setup-js/action.yml) where needed.
+
+`quality.yml` runs every slot on `ubuntu-latest` and has no OS matrix. A repository that needs macOS runners for its slot jobs uses the native pattern in the [slot standard](slots.md): a repo-local `on: workflow_call` workflow whose slot jobs are named exactly `<ID>: <Name>`, called by a job whose key is `quality` (with no `name:`, or a `name:` of exactly `quality`), with a repo-local `Z1: Gate` that needs every slot job. Do not nest `quality.yml` or `test-job.yml` for those jobs: nesting adds a runtime suffix and a duplicated prefix to the check names.
 
 Test jobs configure the environment and run `pre-command` before browser installation. `browser-working-directory` chooses the package containing Playwright; `quality.yml` exposes this as `l3-browser-directory`. Set `artifact-name`, `artifact-path` and `artifact-retention-days` to preserve project test evidence.
 

@@ -31,6 +31,10 @@ jobs:
         run: |
           python3 -m unittest discover -s .github/actions/setup-js -p 'test_*.py'
           python3 -m unittest discover -s .github/actions/configure-env -p 'test_*.py'
+      - name: Test slot gate validation
+        run: python3 -m unittest discover -s .github/slots -p 'test_*.py'
+      - name: Test slot workflow contracts
+        run: node --test .github/slots/quality.workflow-contract.test.mjs
       - name: Validate YAML
         run: |
           python3 -c "

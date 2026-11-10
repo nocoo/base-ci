@@ -1,7 +1,8 @@
 # Reusable quality workflow for JavaScript/TypeScript projects (Bun, npm, pnpm).
-# Implements core quality gate: static analysis (typecheck, lint), unit tests + coverage,
-# security scans (gitleaks + osv), and optional build, L2 (API E2E), L3 (Browser E2E),
-# Worker tests, and package checks.
+# Implements the CI slot standard v1 (docs/slots.md):
+#   S1 typecheck, S2 lint, S3 workflow lint, G1 secret scan, G2 dependency vulnerabilities,
+#   B1 build, L1 unit tests + coverage, L1.5 worker runtime, L2 API E2E, L3 browser E2E,
+#   P1 package check, Z1 gate aggregate.
 #
 # Emits tested-sha and artifact outputs only when all enabled checks succeed and tested-sha matches.
 
@@ -142,6 +143,28 @@ on:
         type: string
         default: ""
 
+      # CI slot standard v1 (docs/slots.md)
+      slot-status:
+        description: "Slot status declaration JSON, e.g. {\"L3\": {\"status\":\"na\",\"reason\":\"no browser UI\"}}. Empty = legacy mode derived from the boolean inputs"
+        type: string
+        default: ""
+      workflow-lint:
+        description: "Run the S3 workflow lint slot"
+        type: boolean
+        default: false
+      workflow-lint-files:
+        description: "Space-separated workflow paths checked by S3 (empty = every workflow)"
+        type: string
+        default: ""
+      workflow-lint-required-workflow:
+        description: "Reusable workflow that must appear in the files checked by S3"
+        type: string
+        default: ""
+      workflow-lint-yamllint:
+        description: "Run yamllint style checks in S3"
+        type: boolean
+        default: false
+
       # Security details
       lockfiles:
         description: "Newline or comma-separated lockfiles for OSV scan"
@@ -209,11 +232,14 @@ jobs:
   # Static analysis, L1 unit tests, and coverage
   # ─────────────────────────────────────────────────────
   l1-gate:
-    name: "L1: Quality & Tests"
+    name: "L1: Unit Tests & Coverage"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       tested-sha: ${{ steps.record-sha.outputs.sha }}
+      s1-typecheck: ${{ steps.s1-typecheck.outcome }}
+      s2-lint: ${{ steps.s2-lint.outcome }}
+      l1-unit: ${{ steps.l1-unit.outcome }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -278,7 +304,8 @@ jobs:
           echo "Executing prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
-      - name: Static Check - Typecheck
+      - name: "S1: Typecheck"
+        id: s1-typecheck
         if: inputs.typecheck
         shell: bash
         working-directory: ${{ inputs.working-directory }}
@@ -305,7 +332,8 @@ jobs:
           echo "Running typecheck: $CMD"
           bash -euo pipefail -c "$CMD"
 
-      - name: Static Check - Lint
+      - name: "S2: Lint"
+        id: s2-lint
         if: inputs.lint
         shell: bash
         working-directory: ${{ inputs.working-directory }}
@@ -332,7 +360,8 @@ jobs:
           echo "Running lint: $CMD"
           bash -euo pipefail -c "$CMD"
 
-      - name: Unit Tests
+      - name: "L1: Unit Tests & Coverage"
+        id: l1-unit
         if: inputs.unit
         shell: bash
         working-directory: ${{ inputs.working-directory }}
@@ -375,10 +404,22 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # Security Scan (invoking nested reusable workflow)
+  # S3: Workflow lint (optional)
   # ─────────────────────────────────────────────────────
-  security-gate:
-    name: "G2: Security"
+  s3-gate:
+    name: "S3: Workflow Lint"
+    if: inputs.workflow-lint
+    uses: ./.github/workflows/workflow-lint.yml
+    with:
+      files: ${{ inputs.workflow-lint-files }}
+      required-reusable-workflow: ${{ inputs.workflow-lint-required-workflow }}
+      yamllint: ${{ inputs.workflow-lint-yamllint }}
+
+  # ─────────────────────────────────────────────────────
+  # G1: Secret scan (invoking nested reusable workflow)
+  # ─────────────────────────────────────────────────────
+  g1-gate:
+    name: "G1: Secret Scan"
     if: inputs.security
     uses: ./.github/workflows/security.yml
     with:
@@ -394,13 +435,35 @@ jobs:
       gitleaks-ignore-path: ${{ inputs.gitleaks-ignore-path }}
       security-command: ${{ inputs.security-command }}
       scan-secrets: true
+      scan-dependencies: false
+
+  # ─────────────────────────────────────────────────────
+  # G2: Dependency vulnerabilities (invoking nested reusable workflow)
+  # ─────────────────────────────────────────────────────
+  g2-gate:
+    name: "G2: Dependency Vulnerabilities"
+    if: inputs.security
+    uses: ./.github/workflows/security.yml
+    with:
+      working-directory: ${{ inputs.working-directory }}
+      package-manager: 'none'
+      runtime-version: ${{ inputs.runtime-version }}
+      node-version: ${{ inputs.node-version }}
+      install-policy: ${{ inputs.install-policy }}
+      extra-install-dirs: ${{ inputs.extra-install-dirs }}
+      lockfiles: ${{ inputs.lockfiles != '' && inputs.lockfiles || (inputs.package-manager == 'bun' && 'bun.lock' || (inputs.package-manager == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json')) }}
+      osv-config: ${{ inputs.osv-config }}
+      gitleaks-config: ${{ inputs.gitleaks-config }}
+      gitleaks-ignore-path: ${{ inputs.gitleaks-ignore-path }}
+      security-command: ''
+      scan-secrets: false
       scan-dependencies: true
 
   # ─────────────────────────────────────────────────────
   # Build step (optional)
   # ─────────────────────────────────────────────────────
   build:
-    name: "Build"
+    name: "B1: Build"
     if: inputs.build
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -483,6 +546,7 @@ jobs:
     if: inputs.l2
     uses: ./.github/workflows/test-job.yml
     with:
+      slot-label: "L2: API E2E"
       runtime: ${{ inputs.package-manager }}
       runtime-version: ${{ inputs.runtime-version }}
       node-version: ${{ inputs.node-version }}
@@ -503,6 +567,7 @@ jobs:
     if: inputs.l3
     uses: ./.github/workflows/test-job.yml
     with:
+      slot-label: "L3: Browser E2E"
       runtime: ${{ inputs.package-manager }}
       runtime-version: ${{ inputs.runtime-version }}
       node-version: ${{ inputs.node-version }}
@@ -521,10 +586,11 @@ jobs:
   # Worker tests (optional)
   # ─────────────────────────────────────────────────────
   worker-gate:
-    name: "Worker Tests"
+    name: "L1.5: Worker Runtime Tests"
     if: inputs.worker
     uses: ./.github/workflows/test-job.yml
     with:
+      slot-label: "L1.5: Worker Runtime Tests"
       runtime: ${{ inputs.package-manager }}
       runtime-version: ${{ inputs.runtime-version }}
       node-version: ${{ inputs.node-version }}
@@ -541,10 +607,11 @@ jobs:
   # Package validation check (optional)
   # ─────────────────────────────────────────────────────
   package-gate:
-    name: "Package Check"
+    name: "P1: Package Check"
     if: inputs.package-check
     uses: ./.github/workflows/test-job.yml
     with:
+      slot-label: "P1: Package Check"
       runtime: ${{ inputs.package-manager }}
       runtime-version: ${{ inputs.runtime-version }}
       node-version: ${{ inputs.node-version }}
@@ -558,12 +625,12 @@ jobs:
       test-env-json: ${{ secrets.test-env-json }}
 
   # ─────────────────────────────────────────────────────
-  # Aggregate Gate: verifies all required jobs completed
-  # and consistent tested-sha across all enabled jobs before emitting output
+  # Z1 Gate: verifies the slot declarations against the jobs and
+  # steps that actually ran, then emits the shared tested SHA
   # ─────────────────────────────────────────────────────
   aggregate-gate:
-    name: "Quality Gate Aggregate"
-    needs: [l1-gate, security-gate, build, l2-gate, l3-gate, worker-gate, package-gate]
+    name: "Z1: Gate"
+    needs: [l1-gate, s3-gate, g1-gate, g2-gate, build, l2-gate, l3-gate, worker-gate, package-gate]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -575,72 +642,181 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify all enabled jobs and consistency
+      - name: Verify slot declarations and gate results
         id: verify-all
         shell: bash
         env:
-          L1_RESULT: ${{ needs.l1-gate.result }}
-          L1_SHA: ${{ needs.l1-gate.outputs.tested-sha }}
-          SEC_RESULT: ${{ needs.security-gate.result }}
-          SEC_SHA: ${{ needs.security-gate.outputs.tested-sha }}
-          SEC_ENABLED: ${{ inputs.security }}
-          BUILD_RESULT: ${{ needs.build.result }}
-          BUILD_SHA: ${{ needs.build.outputs.tested-sha }}
-          BUILD_ENABLED: ${{ inputs.build }}
-          L2_RESULT: ${{ needs.l2-gate.result }}
-          L2_SHA: ${{ needs.l2-gate.outputs.tested-sha }}
-          L2_ENABLED: ${{ inputs.l2 }}
-          L3_RESULT: ${{ needs.l3-gate.result }}
-          L3_SHA: ${{ needs.l3-gate.outputs.tested-sha }}
-          L3_ENABLED: ${{ inputs.l3 }}
-          WORKER_RESULT: ${{ needs.worker-gate.result }}
-          WORKER_SHA: ${{ needs.worker-gate.outputs.tested-sha }}
-          WORKER_ENABLED: ${{ inputs.worker }}
-          PKG_RESULT: ${{ needs.package-gate.result }}
-          PKG_SHA: ${{ needs.package-gate.outputs.tested-sha }}
-          PKG_ENABLED: ${{ inputs.package-check }}
+          SLOT_STATUS: ${{ inputs.slot-status }}
+          SLOT_HOST_RESULT: ${{ needs.l1-gate.result }}
+          SLOT_HOST_SHA: ${{ needs.l1-gate.outputs.tested-sha }}
+          SLOT_S1_ENABLED: ${{ inputs.typecheck }}
+          SLOT_S1_OUTCOME: ${{ needs.l1-gate.outputs.s1-typecheck }}
+          SLOT_S2_ENABLED: ${{ inputs.lint }}
+          SLOT_S2_OUTCOME: ${{ needs.l1-gate.outputs.s2-lint }}
+          SLOT_L1_ENABLED: ${{ inputs.unit }}
+          SLOT_L1_OUTCOME: ${{ needs.l1-gate.outputs.l1-unit }}
+          SLOT_S3_ENABLED: ${{ inputs.workflow-lint }}
+          SLOT_S3_OUTCOME: ${{ needs.s3-gate.result }}
+          SLOT_S3_SHA: ${{ needs.s3-gate.outputs.tested-sha }}
+          SLOT_G1_ENABLED: ${{ inputs.security }}
+          SLOT_G1_OUTCOME: ${{ needs.g1-gate.result }}
+          SLOT_G1_SHA: ${{ needs.g1-gate.outputs.tested-sha }}
+          SLOT_G2_ENABLED: ${{ inputs.security }}
+          SLOT_G2_OUTCOME: ${{ needs.g2-gate.result }}
+          SLOT_G2_SHA: ${{ needs.g2-gate.outputs.tested-sha }}
+          SLOT_B1_ENABLED: ${{ inputs.build }}
+          SLOT_B1_OUTCOME: ${{ needs.build.result }}
+          SLOT_B1_SHA: ${{ needs.build.outputs.tested-sha }}
+          SLOT_L15_ENABLED: ${{ inputs.worker }}
+          SLOT_L15_OUTCOME: ${{ needs.worker-gate.result }}
+          SLOT_L15_SHA: ${{ needs.worker-gate.outputs.tested-sha }}
+          SLOT_L2_ENABLED: ${{ inputs.l2 }}
+          SLOT_L2_OUTCOME: ${{ needs.l2-gate.result }}
+          SLOT_L2_SHA: ${{ needs.l2-gate.outputs.tested-sha }}
+          SLOT_L3_ENABLED: ${{ inputs.l3 }}
+          SLOT_L3_OUTCOME: ${{ needs.l3-gate.result }}
+          SLOT_L3_SHA: ${{ needs.l3-gate.outputs.tested-sha }}
+          SLOT_P1_ENABLED: ${{ inputs.package-check }}
+          SLOT_P1_OUTCOME: ${{ needs.package-gate.result }}
+          SLOT_P1_SHA: ${{ needs.package-gate.outputs.tested-sha }}
         run: |
           set -euo pipefail
 
-          python3 -c '
-          import os, sys
+          python3 - <<'PY'
+          # SLOT_GATE_PYTHON_BEGIN
+          import json
+          import os
+          import sys
 
-          jobs = [
-              ("l1-gate", os.environ["L1_RESULT"], os.environ.get("L1_SHA", ""), True),
-              ("security-gate", os.environ["SEC_RESULT"], os.environ.get("SEC_SHA", ""), os.environ["SEC_ENABLED"] == "true"),
-              ("build", os.environ["BUILD_RESULT"], os.environ.get("BUILD_SHA", ""), os.environ["BUILD_ENABLED"] == "true"),
-              ("l2-gate", os.environ["L2_RESULT"], os.environ.get("L2_SHA", ""), os.environ["L2_ENABLED"] == "true"),
-              ("l3-gate", os.environ["L3_RESULT"], os.environ.get("L3_SHA", ""), os.environ["L3_ENABLED"] == "true"),
-              ("worker-gate", os.environ["WORKER_RESULT"], os.environ.get("WORKER_SHA", ""), os.environ["WORKER_ENABLED"] == "true"),
-              ("package-gate", os.environ["PKG_RESULT"], os.environ.get("PKG_SHA", ""), os.environ["PKG_ENABLED"] == "true"),
-          ]
+          SLOT_IDS = ["S1", "S2", "S3", "G1", "G2", "B1", "L1", "L1.5", "L2", "L3", "P1", "Z1"]
+          STEP_SLOTS = {"S1": "S1", "S2": "S2", "L1": "L1"}
+          JOB_SLOTS = {"S3": "S3", "G1": "G1", "G2": "G2", "B1": "B1", "L1.5": "L15", "L2": "L2", "L3": "L3", "P1": "P1"}
+          VALID_STATUSES = ("impl", "na", "todo")
 
-          print("Quality Aggregate Status Check:")
-          verified_shas = []
 
-          for name, result, sha, enabled in jobs:
-              print(f"  {name:15}: result={result:8} enabled={str(enabled):5} sha={sha}")
-              if enabled:
-                  if result != "success":
-                      sys.stderr.write(f"::error::Required job {name} failed with status \"{result}\"\n")
-                      sys.exit(1)
-                  if not sha:
-                      sys.stderr.write(f"::error::Required job {name} did not emit a tested-sha output\n")
-                      sys.exit(1)
-                  verified_shas.append((name, sha))
+          def fail(message):
+              sys.stderr.write(f"::error::{message}\n")
+              sys.exit(1)
+
+
+          def collect_slots():
+              slots = {}
+              for slot in SLOT_IDS:
+                  if slot == "Z1":
+                      slots[slot] = {"enabled": True, "outcome": "success", "sha": ""}
+                      continue
+                  key = STEP_SLOTS.get(slot) or JOB_SLOTS[slot]
+                  enabled = os.environ.get(f"SLOT_{key}_ENABLED", "")
+                  outcome = os.environ.get(f"SLOT_{key}_OUTCOME", "") or "not_run"
+                  if slot in STEP_SLOTS:
+                      sha = os.environ.get("SLOT_HOST_SHA", "")
+                  else:
+                      sha = os.environ.get(f"SLOT_{key}_SHA", "")
+                  slots[slot] = {"enabled": enabled == "true", "outcome": outcome, "sha": sha}
+              return slots
+
+
+          def require_host_job():
+              result = os.environ.get("SLOT_HOST_RESULT", "")
+              if result != "success":
+                  fail(f"The job hosting S1/S2/L1 finished with result '{result}'")
+              if not os.environ.get("SLOT_HOST_SHA", ""):
+                  fail("The job hosting S1/S2/L1 did not report a tested SHA")
+
+
+          def verify_legacy(slots):
+              require_host_job()
+              verified = []
+              for slot in SLOT_IDS:
+                  if slot == "Z1":
+                      continue
+                  state = slots[slot]
+                  if state["enabled"]:
+                      if state["outcome"] != "success":
+                          fail(f"Required slot {slot} finished with outcome '{state['outcome']}'")
+                      if not state["sha"]:
+                          fail(f"Required slot {slot} did not report a tested SHA")
+                      verified.append((slot, state["sha"]))
+                  elif state["outcome"] not in ("skipped", "not_run"):
+                      fail(f"Disabled slot {slot} was not skipped (outcome '{state['outcome']}')")
+              verified.append(("S1/S2/L1 host job", os.environ["SLOT_HOST_SHA"]))
+              return verified
+
+
+          def verify_strict(raw, slots):
+              require_host_job()
+              try:
+                  declarations = json.loads(raw)
+              except json.JSONDecodeError as exc:
+                  fail(f"slot-status is not valid JSON: {exc}")
+              if not isinstance(declarations, dict):
+                  fail("slot-status must be a JSON object")
+              unknown = sorted(set(declarations) - set(SLOT_IDS))
+              if unknown:
+                  fail(f"slot-status declares unknown slots: {', '.join(unknown)}")
+              missing = [slot for slot in SLOT_IDS if slot not in declarations]
+              if missing:
+                  fail(f"slot-status is missing slot declarations: {', '.join(missing)}")
+              for slot in SLOT_IDS:
+                  entry = declarations[slot]
+                  if not isinstance(entry, dict):
+                      fail(f"slot-status entry for {slot} must be an object")
+                  status = entry.get("status")
+                  if status not in VALID_STATUSES:
+                      fail(f"slot-status entry for {slot} has an invalid status '{status}'")
+                  if status in ("na", "todo"):
+                      reason = entry.get("reason")
+                      if not isinstance(reason, str) or not reason.strip():
+                          fail(f"slot-status entry for {slot} requires a non-empty reason")
+                  if slot == "Z1" and status != "impl":
+                      fail("slot-status entry for Z1 must be impl")
+              verified = []
+              for slot in SLOT_IDS:
+                  if slot == "Z1":
+                      continue
+                  status = declarations[slot]["status"]
+                  state = slots[slot]
+                  if status == "impl":
+                      if not state["enabled"]:
+                          fail(f"Slot {slot} is declared impl but its job or step is not enabled")
+                      if state["outcome"] != "success":
+                          fail(f"Slot {slot} is declared impl but finished with outcome '{state['outcome']}'")
+                      if not state["sha"]:
+                          fail(f"Slot {slot} is declared impl but did not report a tested SHA")
+                      verified.append((slot, state["sha"]))
+                  else:
+                      if state["enabled"]:
+                          fail(f"Slot {slot} is declared {status} but its job or step is enabled")
+                      if state["outcome"] not in ("skipped", "not_run"):
+                          fail(f"Slot {slot} is declared {status} but its job or step ran with outcome '{state['outcome']}'")
+              if not verified:
+                  fail("slot-status declares no implemented slot besides Z1")
+              verified.append(("S1/S2/L1 host job", os.environ["SLOT_HOST_SHA"]))
+              return verified
+
+
+          def main():
+              raw = os.environ.get("SLOT_STATUS", "")
+              slots = collect_slots()
+              if raw == "":
+                  mode = "legacy"
+                  verified = verify_legacy(slots)
               else:
-                  if result != "skipped":
-                      sys.stderr.write(f"::error::Disabled job {name} was not skipped (status: \"{result}\")\n")
-                      sys.exit(1)
+                  mode = "strict"
+                  verified = verify_strict(raw, slots)
+              first_slot, first_sha = verified[0]
+              for slot, sha in verified[1:]:
+                  if sha != first_sha:
+                      fail(f"Commit SHA mismatch between slot {first_slot} and slot {slot}")
+              print(f"Slot gate mode: {mode}")
+              for slot in SLOT_IDS:
+                  state = slots[slot]
+                  print(f"  {slot:5} enabled={str(state['enabled']):5} outcome={state['outcome']:10} sha={state['sha']}")
+              print(f"All {len(verified)} verified slots agree on commit SHA: {first_sha}")
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                  handle.write(f"tested-sha={first_sha}\n")
 
-          # Verify that all enabled jobs tested the exact same commit SHA
-          first_name, first_sha = verified_shas[0]
-          for name, sha in verified_shas[1:]:
-              if sha != first_sha:
-                  sys.stderr.write(f"::error::Commit SHA mismatch between jobs! {first_name}={first_sha} vs {name}={sha}\n")
-                  sys.exit(1)
 
-          print(f"All {len(verified_shas)} enabled jobs succeeded and verified consistent SHA: {first_sha}")
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"tested-sha={first_sha}\n")
-          '
+          main()
+          # SLOT_GATE_PYTHON_END
+          PY

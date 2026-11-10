@@ -1,5 +1,20 @@
 # Changelog
 
+## v2026.11 - 2026-11-10
+
+- Introduce the CI slot standard v1 in `docs/slots.md`: numbered slots (`S1`, `S2`, `S3`, `G1`, `G2`, `B1`, `L1`, `L1.5`, `L2`, `L3`, `P1`, `Z1`), one declaration format and one numbering contract for every consuming repository.
+- **Breaking**: rename the reusable workflow jobs after their slot: `Quality Gate Aggregate` -> `Z1: Gate`, `L1: Quality & Tests` -> `L1: Unit Tests & Coverage`, `Build` -> `B1: Build`, `Worker Tests` -> `L1.5: Worker Runtime Tests`, `Package Check` -> `P1: Package Check`. Branch protection required checks must follow the new names.
+- **Breaking**: split `G2: Security` into `G1: Secret Scan` and `G2: Dependency Vulnerabilities`. The legacy `security: true` input still enables both, and a custom `security-command` still runs exactly once.
+- Add the `slot-status` input. An empty value keeps the legacy boolean-derived behaviour and the `disabled-check-reasons` contract; a non-empty JSON declaration switches to the strict mode, where every v1 slot must be declared as `impl`, `na` or `todo` and `Z1: Gate` verifies the declarations against the jobs and steps that actually ran. `na` and `todo` need a non-empty string reason; `{}` is a strict empty declaration and fails.
+- Add the `S3: Workflow Lint` slot with the `workflow-lint`, `workflow-lint-files`, `workflow-lint-required-workflow` and `workflow-lint-yamllint` inputs. `workflow-lint.yml` now reports `tested-sha` and carries the `S3: Workflow Lint` job name.
+- Keep every existing input (`typecheck`, `lint`, `unit`, `security`, `build`, `worker`, `l2`, `l3`, `package-check`, `disabled-check-reasons`) and the `tested-sha` / `artifact-id` output semantics unchanged, so pinned consumers keep working when they only bump the reference SHA.
+- Keep the Z1 validation inline in `quality.yml`; no new composite action and no internal SHA re-pinning.
+- Add `test-job.yml` slot labels so the nested job names of `L1.5`, `L2`, `L3` and `P1` carry their slot number.
+- Leave `bun-quality.yml` untouched: the legacy interface keeps its job names.
+- Migration detail: required check display names include the caller workflow and job prefix. The nested `test-job.yml` jobs now carry their slot label, a standalone `security.yml` call is named `G1 + G2: Security Scan` and a standalone `workflow-lint.yml` call is named `S3: Workflow Lint`. Read the real name from a CI run after upgrading instead of guessing it.
+- Release source proof (`deploy-worker.yml`, `deploy-docker.yml`) validates repository, workflow, branch, event and exact SHA, not job names, so deployments need no change.
+- Cover the slot gate locally in `.github/slots/` and run both a legacy and a strict declaration path in the self-tests.
+
 ## v2026.10 - 2026-11-10
 
 - Adopt approved material identity assets (`assets/brand/`, bilingual README headers and brand usage scope).

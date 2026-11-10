@@ -7,6 +7,8 @@
 
 为 nocoo 项目共享 JavaScript 检查、原生测试、安全扫描和发布来源验证。消费项目保留触发条件、项目命令与部署环境，共享流程处理工具安装、检查、制品和来源校验。
 
+所有检查按 [CI 槽位（Slot）编号](docs/slots.md) 组织：`S` 静态、`G` 安全、`B` 构建、`L` 分层测试、`P` 发布物、`Z` 收口。跨仓库按编号即可比较覆盖面。
+
 ## 功能
 
 | 工作流 | 用途 |
@@ -41,6 +43,8 @@ jobs:
 
 默认启用类型、lint、单元与安全检查，可选检查需显式开启。命令默认采用对应包管理器的项目脚本；先确认消费仓库存在这些脚本。`coverage-path` 必须指向真实报告。输入、原生任务、Worker 和 Docker 发布示例见[集成说明](docs/workflows.md)。
 
+需要按槽位声明覆盖范围时传入 `slot-status`；不传则沿用布尔开关推导的 legacy 行为。声明格式与校验规则见[槽位标准](docs/slots.md)。
+
 ## 开发
 
 仓库没有根 package 安装或 bundler。辅助实现位于 `.github/actions/`，工作流在 `.github/workflows/`，测试项目在 `.github/fixtures/`。本地需要 Node.js、Python 3 和 actionlint。
@@ -53,8 +57,10 @@ jobs:
 actionlint -shellcheck= -pyflakes=
 node --test .github/actions/docker-manifest/index.test.mjs
 node --test .github/actions/release-source/resolve.test.mjs .github/actions/release-source/workflow-contract.test.mjs
+node --test .github/slots/quality.workflow-contract.test.mjs
 python3 -m unittest discover -s .github/actions/setup-js -p 'test_*.py'
 python3 -m unittest discover -s .github/actions/configure-env -p 'test_*.py'
+python3 -m unittest discover -s .github/slots -p 'test_*.py'
 ```
 
 GitHub 自测覆盖真实依赖安装、生命周期策略、扫描器、SSH 和发布来源。包管理器安装与 SSH runner 配置测试在一次性 CI runner 中运行，不在日常工作机执行。实际生产发布的端到端证据由消费项目提供。
@@ -71,6 +77,7 @@ GitHub 自测覆盖真实依赖安装、生命周期策略、扫描器、SSH 和
 ## 文档
 
 - [完整工作流集成说明](docs/workflows.md)。
+- [CI 槽位标准](docs/slots.md)。
 - [工作流输入定义](.github/workflows/)。
 - [SSH 部署 action](.github/actions/ssh-deploy/README.md)。
 - [维护说明](AGENTS.md)。

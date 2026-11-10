@@ -17,7 +17,7 @@ Consumers keep their triggers, project commands, deployment environment and a fe
 
 The workflow files define the complete input and output contracts. `bun-quality.yml` is the older string-switch interface; new migrations use `quality.yml`. Historical behavior remains available through immutable commits and the `v2026.1`–`v2026.6` tags. The old moving `v2026` alias is not an upgrade policy.
 
-Checks are named after their [CI slot](slots.md) (`S1`, `S2`, `S3`, `G1`, `G2`, `B1`, `L1`, `L1.5`, `L2`, `L3`, `P1`, `Z1`), so repositories can be compared by slot number. `bun-quality.yml` keeps its old job names and is not affected by the slot renames.
+Checks are named after their [CI slot](slots.md) (`S1`, `S2`, `S3`, `G1`, `G2`, `B1`, `L1`, `L1.5`, `L2`, `L3`, `P1`, `Z1`), so repositories can be compared by slot number. Every slot of `quality.yml` is a top-level job, so each slot renders exactly one check named `<ID>: <Canonical Name>` (for example `quality / G1: Secret Scan`). `bun-quality.yml` keeps its old job names and is not affected by the slot renames.
 
 ## JavaScript CI
 
@@ -50,7 +50,38 @@ Commands default to the selected package manager's `run typecheck`, `run lint`, 
 
 `prepare-command` runs before checks in each relevant isolated job. Use it when tests need a built library. Enabling the separate `build` job does not put its output in other jobs. Worker preparation is separate: `worker-prepare-command` defaults to empty.
 
+`quality.yml` runs every slot as its own top-level job: `S1: Typecheck`, `S2: Lint`, `S3: Workflow Lint`, `G1: Secret Scan`, `G2: Dependency Vulnerabilities`, `B1: Build`, `L1: Unit Tests & Coverage`, `L1.5: Worker Runtime Tests`, `L2: API E2E`, `L3: Browser E2E`, `P1: Package Check` and `Z1: Gate`. Typecheck and lint are independent jobs with their own check, duration and tested SHA. The `L1: Unit Tests & Coverage` job always runs so it can validate `disabled-check-reasons`; its unit step is skipped when `unit` is false.
+
 `coverage-path` is explicitly opt-in. It must point to a real report, relative to the repository root. A requested missing report fails the job. Build artifacts use `artifact-name` and `artifact-paths`. The successful aggregate emits `tested-sha` only after every enabled job succeeds and reports the same checked out commit.
+
+### Browser and API evidence
+
+`l3-browsers` installs a space-separated browser list through the package manager (`playwright install --with-deps`), so `l3-browsers: "chromium webkit"` installs both. It takes precedence over the older single-browser `l3-browser` input, which keeps its `chromium` default.
+
+`l3-prepare-command` prepares the L3 job (for example a build before the E2E run) and falls back to the shared `prepare-command` when it is empty. `l2-command` and `l3-command` stay separate from their preparation steps.
+
+```yaml
+jobs:
+  quality:
+    uses: nocoo/base-ci/.github/workflows/quality.yml@BASE_CI_SHA
+    with:
+      l3: true
+      l3-browsers: "chromium webkit"
+      l3-prepare-command: "bun run build"
+      l3-command: "bun run test:e2e:pw"
+      l3-artifact-name: "playwright-report"
+      l3-artifact-path: |
+        playwright-report/
+        test-results/
+      l3-artifact-retention-days: 7
+      l2: true
+      l2-command: "bun run test:api"
+      l2-artifact-name: "api-report"
+      l2-artifact-path: reports/api
+      l2-artifact-retention-days: 7
+```
+
+`l3-artifact-name`, `l3-artifact-path` and `l3-artifact-retention-days` (and the matching `l2-*` inputs) upload the E2E evidence with `if: always()`, so a failed run keeps its report. A requested but missing evidence path fails the job.
 
 ### Slot declarations
 
@@ -88,9 +119,9 @@ jobs:
 
 `na` and `todo` need a non-empty reason. `impl` must match reality: the slot has to be enabled, run and report the same `tested-sha` as every other implemented slot. The full rules, the old input mapping and the migration steps live in the [slot standard](slots.md).
 
-The slot renames change the required check names in branch protection: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. The nested `test-job.yml` jobs now carry their slot label (`L2: API E2E (bun on ubuntu-latest)`, `L3: Browser E2E (...)`, `L1.5: Worker Runtime Tests (...)`, `P1: Package Check (...)`), a standalone `security.yml` call is named `G1 + G2: Security Scan` and a standalone `workflow-lint.yml` call is named `S3: Workflow Lint`. Release source proof does not depend on job names.
+The slot renames change the required check names in branch protection: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. Since v2026.12 every slot of `quality.yml` is a top-level job, so the check names have no duplicated segment and no runtime suffix any more: `quality / L3: Browser E2E` instead of `quality / L3: Browser E2E / L3: Browser E2E (bun on ubuntu-latest)`. Typecheck and lint are separate checks again: `quality / S1: Typecheck` and `quality / S2: Lint`. A standalone `security.yml` call is named `G1 + G2: Security Scan` and a standalone `workflow-lint.yml` call is named `S3: Workflow Lint`. Release source proof does not depend on job names.
 
-GitHub prefixes the required check name with the caller workflow and job, so the displayed name depends on how the consumer calls the workflow. Upgrade first, read the real name from a CI run, and only then update branch protection — do not guess it.
+GitHub prefixes the required check name with the caller job, so the displayed name depends on how the consumer calls the workflow. Upgrade first, read the real name from a CI run, and only then update branch protection — do not guess it. Requiring only `Z1: Gate` is enough: the gate already verifies the declarations, the enabled slots and their tested SHA.
 
 ## Runtime and installation policy
 

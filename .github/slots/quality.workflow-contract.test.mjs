@@ -56,6 +56,13 @@ test('quality.yml never calls another reusable workflow', () => {
   }
 });
 
+test('quality.yml pins every external action to a full commit SHA', () => {
+  const references = [...quality.matchAll(/^\s+uses:\s+(\S+)/gm)].map((match) => match[1]);
+  for (const reference of references.filter((value) => !value.startsWith('./'))) {
+    assert.match(reference, /@[a-f0-9]{40}$/, `External action must use a full commit SHA: ${reference}`);
+  }
+});
+
 test('quality.yml drops the pre-slot job names', () => {
   for (const legacy of ['Quality Gate Aggregate', 'L1: Quality & Tests', 'G2: Security']) {
     assert.doesNotMatch(quality, new RegExp(`name: "${legacy}"`));

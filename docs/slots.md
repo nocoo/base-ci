@@ -164,7 +164,7 @@ jobs:
 
 - **目的**：用最小粒度验证逻辑，并给出覆盖率证据。
 - **属于**：单元测试、覆盖率报告、覆盖率路径校验。
-- **不属于**：端到端测试（L2/L3 层级）、性能基准、覆盖率门槛数值。
+- **不属于**：端到端测试（L2/L3 层级）、性能基准；共享 workflow 不统一规定覆盖率数值门槛，消费仓库在 `test-command` 内执行自己的覆盖率门槛。
 - **典型工具**：Node test runner、bun test、Vitest、Swift XCTest、Go test。
 - **消费仓库插入方式**：`unit: true` 启用，`test-command` 指定命令（留空用 `run test:coverage`），`coverage-path` 指向真实报告目录。
 - **na / todo 声明**：没有可单测的代码写 `na` + 原因；只有集成测试写 `todo` + 原因。
@@ -311,7 +311,7 @@ S1、S2、L1 仍然共享 `L1: Unit Tests & Coverage` 这一个作业，原因�
 
 ### S3 与 Z1 的 scope
 
-- S3 通过 `quality.yml` 的 `workflow-lint: true` 启用时，其作业结果、step 结果与 `tested-sha` 都进入 Z1 的校验范围，声明 `impl` 就必须真的跑过。
+- S3 通过 `quality.yml` 的 `workflow-lint: true` 启用时，其作业结果与 `tested-sha` 都进入 Z1 的校验范围；Z1 不读取 S3 内部 step 的 `outcome`。声明 `impl` 就必须真的跑过。
 - 直接调用 `workflow-lint.yml`（例如独立成一个 CI 作业）依然可用，但它不在 Z1 的 scope 内：Z1 只认识 `quality.yml` 内部编排的槽位。
 - 同理，独立调用 `security.yml` 或 `test-job.yml` 的结果也不进入 Z1。
 

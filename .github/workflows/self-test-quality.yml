@@ -116,11 +116,15 @@ jobs:
       package-manager: bun
       working-directory: .github/fixtures/security-basic
       install-policy: project
-      typecheck: false
+      typecheck: true
       lint: true
       unit: true
       security: true
-      disabled-check-reasons: '{"typecheck": "plain JavaScript fixture without a type system"}'
+      disabled-check-reasons: '{}'
+      typecheck-command: >-
+        node --input-type=module -e "import assert from 'node:assert/strict';
+        import { isFortyTwo } from './src/check.mjs';
+        assert.equal(isFortyTwo('42'), true)"
       lint-command: >-
         node -e "require('node:assert/strict').equal(require('./package.json').dependencies['is-number'],'7.0.0')"
       test-command: >-
@@ -131,7 +135,7 @@ jobs:
       workflow-lint: true
       workflow-lint-files: .github/workflows/quality.yml
       slot-status: >-
-        {"S1": {"status": "na", "reason": "fixture is plain JavaScript without a type system"},
+        {"S1": {"status": "impl"},
         "S2": {"status": "impl"},
         "S3": {"status": "impl"},
         "G1": {"status": "impl"},
@@ -143,6 +147,44 @@ jobs:
         "L3": {"status": "na", "reason": "fixture has no browser UI"},
         "P1": {"status": "todo", "reason": "fixture is not published as a package"},
         "Z1": {"status": "impl"}}
+
+  # ─────────────────────────────────────────────────────
+  # 2c. Quality workflow invocation with the L3 multi-browser,
+  #     L3 prepare command and L3 evidence upload inputs.
+  #     The fixture ships a Playwright CLI stub, so the browser
+  #     list is proven to arrive as separate arguments without
+  #     downloading a real browser.
+  # ─────────────────────────────────────────────────────
+  test-quality-l3-evidence:
+    name: "Quality Gate (L3 multi-browser + evidence upload)"
+    needs: test-quality-strict-slots
+    uses: ./.github/workflows/quality.yml
+    with:
+      package-manager: npm
+      runtime-version: '11.19.1'
+      working-directory: .github/fixtures/l3-basic
+      install-policy: blocked
+      typecheck: false
+      lint: false
+      unit: false
+      security: false
+      disabled-check-reasons: >-
+        {"typecheck": "fixture has no type system",
+        "lint": "fixture has no linter",
+        "unit": "fixture has no unit tests",
+        "security": "fixture has no dependency lockfile to scan"}
+      l3: true
+      l3-browsers: "chromium webkit"
+      l3-prepare-command: "echo 'l3 prepared' > l3-prepared.marker"
+      l3-command: >-
+        test -f l3-prepared.marker &&
+        grep -qx -- '--with-deps' playwright-install-args.txt &&
+        grep -qx -- 'chromium' playwright-install-args.txt &&
+        grep -qx -- 'webkit' playwright-install-args.txt &&
+        mkdir -p l3-evidence && echo 'l3 evidence' > l3-evidence/report.txt
+      l3-artifact-name: l3-evidence
+      l3-artifact-path: .github/fixtures/l3-basic/l3-evidence
+      l3-artifact-retention-days: 3
 
   # ─────────────────────────────────────────────────────
   # 3. Security workflow invocation
@@ -162,8 +204,11 @@ jobs:
   # ─────────────────────────────────────────────────────
   verify-quality-output:
     name: "Verify Quality Gate Output"
-    needs: [test-quality-basic, test-quality-strict-slots, test-native-python]
+    needs: [test-quality-basic, test-quality-strict-slots, test-quality-l3-evidence, test-native-python]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Check legacy slot path tested-sha
         run: |
@@ -181,3 +226,17 @@ jobs:
             echo "::error::tested-sha of the strict slot path must match the workflow commit!"
             exit 1
           fi
+      - name: Download the L3 evidence artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: l3-evidence
+          path: l3-evidence
+      - name: Check the L3 evidence artifact
+        run: |
+          if [ ! -f l3-evidence/report.txt ]; then
+            echo "::error::The L3 evidence artifact does not contain report.txt"
+            ls -la l3-evidence
+            exit 1
+          fi
+          grep -q 'l3 evidence' l3-evidence/report.txt
+          echo "Verified the L3 evidence artifact content"

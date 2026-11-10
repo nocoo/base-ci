@@ -1,0 +1,8 @@
+{
+  "name": "playwright",
+  "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "playwright": "bin/playwright.sh"
+  }
+}

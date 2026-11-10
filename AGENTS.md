@@ -11,7 +11,8 @@ This file is the contract; hooks, CI and configuration enforce it. Raise weaker 
 | Fact | Where |
 |---|---|
 | Human and interface docs | [README.md](README.md), workflow/action input definitions |
-| Enforcement | `.github/workflows/self-test*.yml`, helper tests under `.github/actions/` |
+| CI slot standard | [docs/slots.md](docs/slots.md): numbering, declarations, Z1 rules, migration |
+| Enforcement | `.github/workflows/self-test*.yml`, helper tests under `.github/actions/` and `.github/slots/` |
 | Version | Immutable `v2026.N` tags; consumers pin full commit SHAs |
 | Machine rules | Global `AGENTS.md` and `rules/` |
 | Accidents | [Retrospective.md](Retrospective.md) |
@@ -20,6 +21,7 @@ This file is the contract; hooks, CI and configuration enforce it. Raise weaker 
 
 - Consumers and internal cross-repository action references use full immutable SHAs. Relative internal action paths resolve inside the consumer checkout and are unsafe substitutes.
 - Every enabled quality job must succeed and report the same checkout SHA before the aggregate emits `tested-sha`. Missing requested artifacts fail.
+- Slot declarations are a contract. `impl` requires the slot's job or step to be enabled, to succeed and to report the same SHA; `na` and `todo` require the slot to stay off and to carry a truthful reason. `Z1: Gate` fails on unknown slots, illegal statuses, missing reasons, enabled-but-skipped slots and SHA mismatches. An empty `slot-status` keeps the legacy boolean-derived path.
 - Pin exact runtimes and frozen installs; preserve the consumer's lifecycle policy. Extra install paths are repository-root relative and must not escape through traversal or symlinks. Fixture locks come from real supported package managers, with no workstation registry proxy.
 - Map only named test credentials into CI. Production credentials belong to deployment jobs and exact GitHub environments; never map `toJSON(secrets)` wholesale.
 - Release proof validates the selected GitHub API run/tag, repository, workflow, branch, event and exact SHA. Reject PR/fork, stale or mismatched evidence; never fall back to latest green or `github.sha`.
@@ -31,7 +33,7 @@ This file is the contract; hooks, CI and configuration enforce it. Raise weaker 
 
 | Location | Purpose |
 |---|---|
-| `.github/workflows/quality.yml`, `test-job.yml` | Boolean JS gates and portable/native jobs |
+| `.github/workflows/quality.yml`, `test-job.yml` | Slot-numbered JS gates and portable/native jobs |
 | `.github/workflows/security.yml`, `workflow-lint.yml` | Verified scanners, lockfiles, YAML and immutable pins |
 | `.github/workflows/deploy-worker.yml`, `deploy-docker.yml` | Proven-source deployment interfaces |
 | `.github/actions/setup-js/`, `configure-env/` | Python runtime/install and environment validation |
@@ -39,6 +41,8 @@ This file is the contract; hooks, CI and configuration enforce it. Raise weaker 
 | `.github/actions/release-source/`, `docker-manifest/` | JavaScript release proof and manifest validation |
 | `.github/actions/ssh-deploy/` | SSH transport, dedicated README and runner smoke test |
 | `.github/fixtures/` | Frozen Bun/npm/pnpm and native-helper fixtures |
+| `.github/slots/` | Z1 slot gate tests extracted from `quality.yml`, workflow contract tests |
+| `docs/slots.md` | CI slot standard: numbering, declarations, Z1 rules, migration |
 
 ## Commands
 
@@ -48,8 +52,10 @@ Run from the repository root. Local helper checks need Node and Python 3; CI pin
 actionlint -shellcheck= -pyflakes=
 node --test .github/actions/docker-manifest/index.test.mjs
 node --test .github/actions/release-source/resolve.test.mjs .github/actions/release-source/workflow-contract.test.mjs
+node --test .github/slots/quality.workflow-contract.test.mjs
 python3 -m unittest discover -s .github/actions/setup-js -p 'test_*.py'
 python3 -m unittest discover -s .github/actions/configure-env -p 'test_*.py'
+python3 -m unittest discover -s .github/slots -p 'test_*.py'
 git diff --check
 ```
 
@@ -63,7 +69,7 @@ Package-manager/lifecycle and SSH smoke suites run in disposable GitHub runners;
 |---|---|---|---|
 | L1 helpers (incl. former G1 static) | Statements, branches, functions and lines each ≥95%; no skipped/focused tests; check-only lint/types with zero errors and warnings in every helper lane | planned | Node and Python behavioral tests run in `self-test.yml` / `self-test-release.yml`; no four-metric coverage threshold exists. CI enforces actionlint/YAML/contracts, with shellcheck/pyflakes disabled and no complete helper static gate; no installed pre-commit rejection, timing or index-snapshot proof exists |
 | L2 API | Real HTTP over every owned endpoint/method | N/A | This provider exposes no application HTTP API; helper integration is exercised by reusable-workflow fixtures |
-| L3 workflows | Real install, environment, quality, scanner and SSH workflows | enforced | `self-test-quality.yml`, `self-test.yml`, `self-test-ssh-deploy.yml`; actual consumer deployments require separate evidence |
+| L3 workflows | Real install, environment, quality, scanner and SSH workflows | enforced | `self-test-quality.yml` (legacy and strict slot paths), `self-test.yml`, `self-test-ssh-deploy.yml`; actual consumer deployments require separate evidence |
 | G2 security | Dependency and secret scans; missing scanner fails | planned | `self-test-quality.yml` verifies scanners on `security-basic`; provider-wide secrets and every fixture lock are not a complete enforced gate |
 | D1 isolation | Disposable test state, guarded cleanup, no production/daily-dev writes | planned | CI uses isolated runners and `RUNNER_TEMP` markers; complete guards for locally invoked fixtures are not enforced |
 | Docs | Public input/output and adapter instructions match behavior | manual | Review README and action/workflow contracts |

@@ -140,7 +140,7 @@ jobs:
   # 3. Security workflow invocation
   # ─────────────────────────────────────────────────────
   test-security-scan:
-    name: "Security Scan on basic fixture"
+    name: "G1 + G2: Security Scan on basic fixture"
     uses: ./.github/workflows/security.yml
     with:
       working-directory: .github/fixtures/security-basic

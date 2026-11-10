@@ -132,7 +132,7 @@ The shared scanner installs Gitleaks 8.30.1 and OSV Scanner 2.5.1 from versioned
 
 `scan-history: true` fetches and scans the full Git history. The default scans the checked out directory. Projects with stronger or specialized security gates can run them through `security-command`, with the built-in scans switched off explicitly and their original Git range, configuration and reports preserved.
 
-Inside `quality.yml` the security gate runs as two jobs: `G1: Secret Scan` (gitleaks) and `G2: Dependency Vulnerabilities` (OSV). The legacy `security: true` input still enables both. A custom `security-command` runs once, in the G1 job, and the G2 job only scans lockfiles.
+Inside `quality.yml` the security gate runs as two jobs: `G1: Secret Scan` (gitleaks) and `G2: Dependency Vulnerabilities` (OSV). The legacy `security: true` input still enables both. A custom `security-command` runs once, in the G1 job, and the G2 job only scans lockfiles. The split costs one extra runner job; both jobs install the scanners.
 
 ## Release source proof
 

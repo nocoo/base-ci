@@ -124,6 +124,29 @@ test('test-job.yml accepts a slot label without changing the default job name', 
   assert.match(testJob, /\|\| format\('Test \(\{0\} on \{1\}\)'/);
 });
 
+test('quality.yml declares every slot state the Z1 gate reads', () => {
+  const block = jobBlock(quality, 'aggregate-gate');
+  const gate = quality.slice(quality.indexOf('# SLOT_GATE_PYTHON_BEGIN'), quality.indexOf('# SLOT_GATE_PYTHON_END'));
+  const stateKeys = ['S1', 'S2', 'L1', 'S3', 'G1', 'G2', 'B1', 'L15', 'L2', 'L3', 'P1'];
+  const jobKeys = ['S3', 'G1', 'G2', 'B1', 'L15', 'L2', 'L3', 'P1'];
+  for (const key of stateKeys) {
+    assert.match(block, new RegExp(`SLOT_${key}_ENABLED:`), `Missing SLOT_${key}_ENABLED`);
+    assert.match(block, new RegExp(`SLOT_${key}_OUTCOME:`), `Missing SLOT_${key}_OUTCOME`);
+  }
+  for (const key of jobKeys) {
+    assert.match(block, new RegExp(`SLOT_${key}_SHA:`), `Missing SLOT_${key}_SHA`);
+  }
+  assert.match(block, /SLOT_HOST_RESULT:/);
+  assert.match(block, /SLOT_HOST_SHA:/);
+  assert.match(gate, /SLOT_\{key\}_ENABLED/);
+  assert.match(gate, /SLOT_\{key\}_OUTCOME/);
+  assert.match(gate, /SLOT_\{key\}_SHA/);
+  for (const slot of ['S1', 'S2', 'S3', 'G1', 'G2', 'B1', 'L1', 'L1.5', 'L2', 'L3', 'P1', 'Z1']) {
+    assert.match(gate, new RegExp(`"${slot.replace('.', '\\.')}"`), `The gate does not know slot ${slot}`);
+  }
+  assert.match(gate, /"L1\.5": "L15"/);
+});
+
 test('bun-quality.yml keeps the legacy job names', () => {
   assert.match(bunQuality, /name: "Worker Tests"/);
   assert.doesNotMatch(bunQuality, /slot-status:/);

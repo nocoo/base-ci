@@ -61,6 +61,14 @@ jobs:
   quality:
     uses: nocoo/base-ci/.github/workflows/quality.yml@BASE_CI_SHA
     with:
+      # every implemented slot keeps its switch enabled
+      typecheck: true
+      lint: true
+      unit: true
+      security: true
+      workflow-lint: true
+      l2: true
+      package-check: true
       slot-status: >-
         {"S1": {"status": "impl"},
         "S2": {"status": "impl"},
@@ -76,9 +84,13 @@ jobs:
         "Z1": {"status": "impl"}}
 ```
 
+`slot-status` is a declaration only. It never turns a check on: every `impl` slot still needs its boolean input (`typecheck`, `lint`, `unit`, `security`, `workflow-lint`, `build`, `worker`, `l2`, `l3`, `package-check`) enabled, and every `na` / `todo` slot needs its input left off.
+
 `na` and `todo` need a non-empty reason. `impl` must match reality: the slot has to be enabled, run and report the same `tested-sha` as every other implemented slot. The full rules, the old input mapping and the migration steps live in the [slot standard](slots.md).
 
-The slot renames change the required check names in branch protection: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. Release source proof does not depend on job names.
+The slot renames change the required check names in branch protection: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. The nested `test-job.yml` jobs now carry their slot label (`L2: API E2E (bun on ubuntu-latest)`, `L3: Browser E2E (...)`, `L1.5: Worker Runtime Tests (...)`, `P1: Package Check (...)`), a standalone `security.yml` call is named `G1 + G2: Security Scan` and a standalone `workflow-lint.yml` call is named `S3: Workflow Lint`. Release source proof does not depend on job names.
+
+GitHub prefixes the required check name with the caller workflow and job, so the displayed name depends on how the consumer calls the workflow. Upgrade first, read the real name from a CI run, and only then update branch protection — do not guess it.
 
 ## Runtime and installation policy
 
@@ -266,6 +278,6 @@ Every image has the proven source SHA as its tag and OCI revision. A release man
 
 ## Verification and upgrades
 
-Five workflows enforce the provider: syntax and installation policy, real quality/test/scanner fixtures, SSH action behavior, release-source/manifest contracts, and the slot gate behaviour (legacy and strict declaration paths). Fixtures include Linux/macOS, Python, npm, pnpm, an older supported Bun and the current Bun. Release source validation has also been exercised against real consumer CI runs. Production end-to-end evidence comes from consumer Release runs.
+Four workflows enforce the provider: syntax and installation policy, real quality/test/scanner fixtures, SSH action behavior, and release-source/manifest contracts. The self-tests cover both slot paths: the legacy boolean-derived path and the strict `slot-status` path. Fixtures include Linux/macOS, Python, npm, pnpm, an older supported Bun and the current Bun. Release source validation has also been exercised against real consumer CI runs. Production end-to-end evidence comes from consumer Release runs.
 
 For a provider update: change pinned tools once, run provider self-tests, migrate representative JS/native/Worker/Docker consumers, and create an immutable release. Consumers then update their full SHA and run their own checks. Keep application runtime upgrades separate when compatibility requires it. Manual package publication must use an existing intended version/tag; a successful YAML check is not evidence that a package was published.

@@ -76,6 +76,14 @@ jobs:
     uses: nocoo/base-ci/.github/workflows/quality.yml@BASE_CI_SHA
     with:
       runtime-version: '1.4.2'
+      # 每个 impl 槽位对应的开关仍然必须打开
+      typecheck: true
+      lint: true
+      unit: true
+      security: true
+      workflow-lint: true
+      l2: true
+      package-check: true
       slot-status: >-
         {"S1": {"status": "impl"},
         "S2": {"status": "impl"},
@@ -90,6 +98,8 @@ jobs:
         "P1": {"status": "impl"},
         "Z1": {"status": "impl"}}
 ```
+
+`slot-status` 只是**声明**，不会替你打开任何开关：每个 `impl` 槽位对应的布尔输入（`typecheck`、`lint`、`unit`、`security`、`workflow-lint`、`build`、`worker`、`l2`、`l3`、`package-check`）仍然要显式打开，否则 Z1 会以 “declared impl but its job or step is not enabled” 失败；反过来，声明为 `na` / `todo` 的槽位对应开关必须保持关闭。
 
 注意：strict 模式下被关闭的核心检查（`typecheck` / `lint` / `unit` / `security`）仍然需要在 `disabled-check-reasons` 里给出解释，两处原因是互补的：前者说明**槽位状态**，后者说明**为什么关掉这个检查**。
 
@@ -121,7 +131,7 @@ jobs:
 - **典型工具**：actionlint 1.7.12、yamllint（可选）。
 - **消费仓库插入方式**：`workflow-lint: true` 启用；`workflow-lint-files`（留空检查全部工作流）、`workflow-lint-required-workflow`（要求出现某个可复用工作流）、`workflow-lint-yamllint`（额外跑 yamllint）。
 - **na / todo 声明**：仓库没有自己的 workflow 时写 `na` + 原因；还没把 workflow 自检接进 CI 写 `todo` + 原因。
-- **scope**：只有当它在 `quality.yml` 内部被调用时，S3 的结果才进入 Z1 校验；独立调用 `workflow-lint.yml` 的结果不在 Z1 的 scope 内。
+- **scope**：只有当它在 `quality.yml` 内部被调用时，S3 的结果才进入 Z1 校验；独立调用 `workflow-lint.yml` 的结果不在 Z1 的 scope 内。Z1 读取的是 S3 作业的 `result` 与 `tested-sha`，不读取 S3 内部 step 的 `outcome`。
 
 ### G1 密钥扫描
 
@@ -154,7 +164,7 @@ jobs:
 
 - **目的**：用最小粒度验证逻辑，并给出覆盖率证据。
 - **属于**：单元测试、覆盖率报告、覆盖率路径校验。
-- **不属于**：端到端测试（S2/S3 层级）、浏览器测试、性能基准。
+- **不属于**：端到端测试（L2/L3 层级）、性能基准、覆盖率门槛数值。
 - **典型工具**：Node test runner、bun test、Vitest、Swift XCTest、Go test。
 - **消费仓库插入方式**：`unit: true` 启用，`test-command` 指定命令（留空用 `run test:coverage`），`coverage-path` 指向真实报告目录。
 - **na / todo 声明**：没有可单测的代码写 `na` + 原因；只有集成测试写 `todo` + 原因。
@@ -261,12 +271,26 @@ legacy 模式（`slot-status` 为空）下：
 | `L2: API E2E` | 不变 |
 | `L3: Browser E2E` | 不变 |
 
+外层 job 名不变，但 `test-job.yml` 新增了 `slot-label`，嵌套作业名也随之变化（外层 `quality` 作业名 + 嵌套作业名一起构成显示名）：
+
+| 位置 | 旧显示名 | 新显示名 |
+| --- | --- | --- |
+| `quality.yml` → `test-job.yml`（L2） | `Test (bun on ubuntu-latest)` | `L2: API E2E (bun on ubuntu-latest)` |
+| `quality.yml` → `test-job.yml`（L3） | `Test (bun on ubuntu-latest)` | `L3: Browser E2E (bun on ubuntu-latest)` |
+| `quality.yml` → `test-job.yml`（L1.5） | `Test (bun on ubuntu-latest)` | `L1.5: Worker Runtime Tests (bun on ubuntu-latest)` |
+| `quality.yml` → `test-job.yml`（P1） | `Test (bun on ubuntu-latest)` | `P1: Package Check (bun on ubuntu-latest)` |
+| 独立调用 `security.yml` | `Security (Secrets & Vulnerabilities)` | `G1 + G2: Security Scan`（只扫密钥时为 `G1: Secret Scan`，只扫依赖时为 `G2: Dependency Vulnerabilities`，只跑自定义命令时为 `G1 + G2: Security Gate (custom command)`） |
+| 独立调用 `workflow-lint.yml` | `lint`（隐式 job 名） | `S3: Workflow Lint` |
+| 独立调用 `test-job.yml` | `Test (bun on ubuntu-latest)` | 不变（不传 `slot-label` 即保持旧名） |
+
 `bun-quality.yml` 是旧版不可变接口，job 名保持原样，不受本次改名影响。
+
+**不要猜 required check 的名字。** GitHub 显示的 required check 名称包含调用方工作流与作业前缀（形如 `CI / quality / Z1: Gate`），真实名称取决于消费仓库的调用方式。升级后先跑一次真实 CI，从运行页面或 `gh api` 读取实际显示名，再改分支保护规则。
 
 ## 迁移步骤
 
 1. **先升级引用**：把 `BASE_CI_SHA` 换成发布后的完整 40 位 SHA。行为不变——不传 `slot-status` 就是 legacy 模式。
-2. **更新分支保护**：把 required check `Quality Gate Aggregate` 改成 `Z1: Gate`；`G2: Security` 需要拆成 `G1: Secret Scan` 和 `G2: Dependency Vulnerabilities` 两条（或只保留 Z1 为唯一必过项）。
+2. **更新分支保护**：把 required check `Quality Gate Aggregate` 改成 `Z1: Gate`；`G2: Security` 需要拆成 `G1: Secret Scan` 和 `G2: Dependency Vulnerabilities` 两条（或只保留 Z1 为唯一必过项）。显示名带调用方前缀，**升级后先跑一次真实 CI 读取实际名称再改规则**。
 3. **确认发布链路**：`deploy-worker.yml` / `deploy-docker.yml` 的来源证明校验仓库、工作流、分支、事件与精确 SHA，不依赖 job 名，因此无需改动。
 4. **进入 strict 模式**：为每个 v1 槽位写 `slot-status` 声明。`na` 与 `todo` 都要写原因，`impl` 必须真的启用对应开关。
 5. **逐步补齐**：`todo` 槽位落地后把对应开关打开，状态改成 `impl`。

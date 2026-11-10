@@ -177,6 +177,20 @@ class SlotGateTest(unittest.TestCase):
         result, _ = run_gate(payload)
         self.assert_rejected(result, "requires a non-empty reason")
 
+    def test_strict_mode_rejects_a_reason_that_is_not_a_string(self):
+        for reason in (None, False, 0, [], {}):
+            with self.subTest(reason=reason):
+                payload = json.dumps(declaration({"L3": {"status": "na", "reason": reason}}))
+                result, _ = run_gate(payload)
+                self.assert_rejected(result, "requires a non-empty reason")
+
+    def test_strict_mode_rejects_a_todo_reason_that_is_not_a_string(self):
+        for reason in (None, False, 0, [], {}):
+            with self.subTest(reason=reason):
+                payload = json.dumps(declaration({"L3": {"status": "todo", "reason": reason}}))
+                result, _ = run_gate(payload)
+                self.assert_rejected(result, "requires a non-empty reason")
+
     def test_strict_mode_rejects_a_missing_declaration(self):
         statuses = declaration()
         del statuses["L3"]

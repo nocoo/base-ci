@@ -764,8 +764,10 @@ jobs:
                   status = entry.get("status")
                   if status not in VALID_STATUSES:
                       fail(f"slot-status entry for {slot} has an invalid status '{status}'")
-                  if status in ("na", "todo") and not str(entry.get("reason", "")).strip():
-                      fail(f"slot-status entry for {slot} requires a non-empty reason")
+                  if status in ("na", "todo"):
+                      reason = entry.get("reason")
+                      if not isinstance(reason, str) or not reason.strip():
+                          fail(f"slot-status entry for {slot} requires a non-empty reason")
                   if slot == "Z1" and status != "impl":
                       fail("slot-status entry for Z1 must be impl")
               verified = []

@@ -570,7 +570,11 @@ jobs:
         run: |
           set -euo pipefail
           read -r -a files <<< "$WORKFLOW_FILES"
-          "$RUNNER_TEMP/actionlint" "${files[@]}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            "$RUNNER_TEMP/actionlint"
+          else
+            "$RUNNER_TEMP/actionlint" "${files[@]}"
+          fi
 
       - name: Check immutable shared workflow references
         shell: bash

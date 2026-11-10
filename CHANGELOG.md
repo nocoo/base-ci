@@ -1,5 +1,19 @@
 # Changelog
 
+## v2026.12 - proposed
+
+Proposed tag: `v2026.12` (patch release on top of `v2026.11`). Not published yet: the tag and the GitHub release are created by the maintainer after the provider self-tests and the representative consumer runs pass.
+
+- Flatten the `quality.yml` check names: every slot is now a top-level job, so each slot renders exactly one check named `<ID>: <Canonical Name>` (`S1: Typecheck`, `S2: Lint`, `S3: Workflow Lint`, `G1: Secret Scan`, `G2: Dependency Vulnerabilities`, `B1: Build`, `L1: Unit Tests & Coverage`, `L1.5: Worker Runtime Tests`, `L2: API E2E`, `L3: Browser E2E`, `P1: Package Check`, `Z1: Gate`). The duplicated segments (`G1: Secret Scan / G1: Secret Scan`) and the runtime suffix (`L3: Browser E2E (bun on ubuntu-latest)`) are gone.
+- **Breaking**: the required check names change again. Recommend keeping only `Z1: Gate` as the required check; read the real displayed name (`<caller job> / <slot>`) from a CI run instead of guessing it.
+- `quality.yml` no longer calls `security.yml`, `workflow-lint.yml` or `test-job.yml`; their slot logic is inlined so a slot cannot fail through a nested reusable workflow. The three standalone workflows keep their behaviour and their job names for direct callers.
+- **Breaking**: `S1: Typecheck` and `S2: Lint` are independent jobs with their own check, duration and tested SHA. `L1: Unit Tests & Coverage` stays a canonical job that always runs (it validates `disabled-check-reasons`); its unit step is skipped when `unit` is false, and `Z1: Gate` fails when the L1 job itself failed.
+- Keep every existing input (`typecheck`, `lint`, `unit`, `security`, `build`, `worker`, `l2`, `l3`, `package-check`, `disabled-check-reasons`, `slot-status`, `l3-browser`, ...) and the `tested-sha` / `artifact-id` output semantics unchanged, so pinned consumers keep working when they only bump the reference SHA. The legacy boolean-derived path and the `disabled-check-reasons` contract are unchanged.
+- Add the L3 inputs `l3-browsers` (space-separated browser list, installed as separate arguments through `playwright install --with-deps`), `l3-prepare-command` (falls back to `prepare-command`), `l3-artifact-name`, `l3-artifact-path` (multiline) and `l3-artifact-retention-days` (default 7). The old `l3-browser` input keeps working and stays the fallback.
+- Add the L2 evidence inputs `l2-artifact-name`, `l2-artifact-path` and `l2-artifact-retention-days` (default 7). Both the L2 and the L3 evidence uploads run with `if: always()`, so a failed E2E run keeps its report.
+- Document the canonical check names, the before/after mapping, the L3 multi-browser example, the L2 evidence notes and the slot boundaries in `docs/slots.md`: L1.5 is `na` for a static-asset Worker without a Workers-runtime suite, Playwright against `wrangler dev` belongs to L3, and a release `verify-command` is not L2.
+- Cover the new contract in the self-tests: the strict path runs S1 and S2 as jobs, the workflow contract tests prove that `quality.yml` calls no reusable workflow and that every canonical job exists once, and the L3 self-test installs a browser list, runs an L3 prepare command and verifies the uploaded evidence artifact.
+
 ## v2026.11 - 2026-11-10
 
 - Introduce the CI slot standard v1 in `docs/slots.md`: numbered slots (`S1`, `S2`, `S3`, `G1`, `G2`, `B1`, `L1`, `L1.5`, `L2`, `L3`, `P1`, `Z1`), one declaration format and one numbering contract for every consuming repository.

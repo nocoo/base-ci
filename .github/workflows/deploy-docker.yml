@@ -110,7 +110,7 @@ jobs:
       run-id: ${{ steps.source.outputs.source-run-id }}
     steps:
       - id: source
-        uses: nocoo/base-ci/.github/actions/release-source@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/release-source@f8276c403a2ac61500deb936708020bcf81a3d08
         with:
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
           expected-workflow-name: ${{ inputs.expected-workflow-name }}
@@ -121,7 +121,7 @@ jobs:
           required-quality-check: ${{ inputs.required-quality-check }}
           require-quality-check: ${{ inputs.require-quality-check }}
       - id: plan
-        uses: nocoo/base-ci/.github/actions/docker-manifest@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/docker-manifest@f8276c403a2ac61500deb936708020bcf81a3d08
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ steps.source.outputs.target-sha }}
@@ -223,7 +223,7 @@ jobs:
           path: base-ci-digests
           merge-multiple: true
       - id: manifest
-        uses: nocoo/base-ci/.github/actions/docker-manifest@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/docker-manifest@f8276c403a2ac61500deb936708020bcf81a3d08
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ needs.source.outputs.sha }}
@@ -248,7 +248,7 @@ jobs:
           echo '::error::SSH host is unreachable'
           exit 1
       - name: Recheck proven source before deployment
-        uses: nocoo/base-ci/.github/actions/release-source@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/release-source@f8276c403a2ac61500deb936708020bcf81a3d08
         with:
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
           expected-workflow-name: ${{ inputs.expected-workflow-name }}
@@ -260,7 +260,7 @@ jobs:
           required-quality-check: ${{ inputs.required-quality-check }}
           require-quality-check: ${{ inputs.require-quality-check }}
       - name: Deploy verified images
-        uses: nocoo/base-ci/.github/actions/ssh-deploy@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/ssh-deploy@f8276c403a2ac61500deb936708020bcf81a3d08
         env:
           IMAGE_SHA: ${{ needs.source.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}

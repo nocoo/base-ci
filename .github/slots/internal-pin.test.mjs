@@ -38,7 +38,10 @@ test('every nocoo/base-ci internal action reference matches provider pin', () =>
 test('provider pin is not older than minimum release-source pin', () => {
   assert.match(minimumReleaseSourcePin, /^[a-f0-9]{40}$/);
   assert.notEqual(providerPin, '2231caf82cf16f103f48cab467b3464b106d6604');
-  assert.ok(providerPin >= minimumReleaseSourcePin, 'provider pin must be at least the minimum release-source pin');
+  assert.ok(
+    BigInt(`0x${providerPin}`) >= BigInt(`0x${minimumReleaseSourcePin}`),
+    'provider pin must be at least the minimum release-source pin',
+  );
 });
 
 test('release-source pins are consistent across deploy workflows', () => {

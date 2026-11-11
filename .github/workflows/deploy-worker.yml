@@ -1,5 +1,5 @@
 # Reusable Workers release. Pin callers to a full commit SHA.
-# Internal composite: nocoo/base-ci/.github/actions/release-source@00cab4b1f6e6389aaf0a983cbf689be715f97497 (see .github/internal-provider-pin.txt)
+# Internal composite: nocoo/base-ci/.github/actions/release-source@f8276c403a2ac61500deb936708020bcf81a3d08 (see .github/internal-provider-pin.txt)
 # Do not change that pin to ./.github/actions/release-source (caller checkout is consumer source).
 
 name: Deploy Worker
@@ -257,7 +257,7 @@ jobs:
 
       - name: Resolve release source
         id: source
-        uses: nocoo/base-ci/.github/actions/release-source@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/release-source@f8276c403a2ac61500deb936708020bcf81a3d08
         with:
           github-token: ${{ github.token }}
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
@@ -340,12 +340,12 @@ jobs:
           (inputs.wrangler-version == '' || inputs.wrangler-version == 'lockfile') &&
           (inputs.deploy-script == '' || inputs.d1-migrations)
         id: locked-wrangler
-        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@f8276c403a2ac61500deb936708020bcf81a3d08
         with:
           working-directory: ${{ steps.paths.outputs.working-directory }}
 
       - name: Setup JS and frozen install
-        uses: nocoo/base-ci/.github/actions/setup-js@00cab4b1f6e6389aaf0a983cbf689be715f97497
+        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}

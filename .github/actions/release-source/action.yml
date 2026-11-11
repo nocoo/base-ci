@@ -44,7 +44,7 @@ inputs:
     required: false
     default: package.json
   required-quality-check:
-    description: Required GitHub check-run name on the proven SHA (default quality / Z1: Gate)
+    description: "Required GitHub check-run name on the proven SHA (default quality / Z1: Gate)"
     required: false
     default: "quality / Z1: Gate"
   require-quality-check:

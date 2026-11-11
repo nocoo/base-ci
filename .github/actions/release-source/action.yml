@@ -43,6 +43,14 @@ inputs:
     description: Repository-relative package.json path used when package-version-match is true
     required: false
     default: package.json
+  required-quality-check:
+    description: Required GitHub check-run name on the proven SHA (default quality / Z1: Gate)
+    required: false
+    default: "quality / Z1: Gate"
+  require-quality-check:
+    description: "true to require the check-run to exist and succeed on the proven SHA"
+    required: false
+    default: "true"
 
 outputs:
   target-sha:
@@ -69,4 +77,6 @@ runs:
         RELEASE_REQUIRE_FRESH_MAIN: ${{ inputs.require-fresh-main }}
         RELEASE_PACKAGE_VERSION_MATCH: ${{ inputs.package-version-match }}
         RELEASE_PACKAGE_JSON_PATH: ${{ inputs.package-json-path }}
+        RELEASE_REQUIRED_QUALITY_CHECK: ${{ inputs.required-quality-check }}
+        RELEASE_REQUIRE_QUALITY_CHECK: ${{ inputs.require-quality-check }}
       run: node "$GITHUB_ACTION_PATH/resolve.mjs"

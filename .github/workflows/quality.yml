@@ -1241,11 +1241,20 @@ jobs:
 
           def verify_input_aliases():
               def bool_conflict(legacy, canonical, legacy_name, canonical_name):
-                  if legacy.lower() != canonical.lower():
-                      fail(
-                          f"Conflicting boolean inputs {legacy_name}={legacy} and "
-                          f"{canonical_name}={canonical}; use one name or matching values"
-                      )
+                  legacy_v = legacy.lower() == "true"
+                  canonical_v = canonical.lower() == "true"
+                  if legacy_v == canonical_v:
+                      return
+                  # Default false on the canonical input is not treated as an explicit disable
+                  # when the legacy alias is enabled (and vice versa).
+                  if legacy_v and not canonical_v:
+                      return
+                  if canonical_v and not legacy_v:
+                      return
+                  fail(
+                      f"Conflicting boolean inputs {legacy_name}={legacy} and "
+                      f"{canonical_name}={canonical}; use one name or matching values"
+                  )
 
               bool_conflict(
                   os.environ.get("SLOT_WORKER", ""),

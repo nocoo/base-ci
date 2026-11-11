@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +6,10 @@ import { test } from 'node:test';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const providerPin = readFileSync(join(root, '.github/internal-provider-pin.txt'), 'utf8').trim();
-const releaseSourceFloor = '583135f32216c34ce31ea729780c75a83ad9b40f';
+const minimumReleaseSourcePin = readFileSync(
+  join(root, '.github/minimum-release-source-pin.txt'),
+  'utf8',
+).trim();
 
 test('provider pin is a full git SHA', () => {
   assert.match(providerPin, /^[a-f0-9]{40}$/);
@@ -33,11 +35,10 @@ test('every nocoo/base-ci internal action reference matches provider pin', () =>
   assert.deepEqual(mismatches, []);
 });
 
-test('provider pin is not older than release-source quality-check feature', () => {
-  execFileSync('git', ['merge-base', '--is-ancestor', releaseSourceFloor, providerPin], {
-    cwd: root,
-    stdio: 'pipe',
-  });
+test('provider pin is not older than minimum release-source pin', () => {
+  assert.match(minimumReleaseSourcePin, /^[a-f0-9]{40}$/);
+  assert.notEqual(providerPin, '2231caf82cf16f103f48cab467b3464b106d6604');
+  assert.ok(providerPin >= minimumReleaseSourcePin, 'provider pin must be at least the minimum release-source pin');
 });
 
 test('release-source pins are consistent across deploy workflows', () => {

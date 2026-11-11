@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.14 - 2026-11-11
+
+- Repin every internal `nocoo/base-ci` composite action reference to the provider SHA recorded in `.github/internal-provider-pin.txt`; add `internal-pin.test.mjs` so CI fails on stale or mismatched pins. `deploy-worker.yml` and `deploy-docker.yml` forward `required-quality-check` / `require-quality-check` to `release-source` (default `quality / Z1: Gate`).
+- Restore canonical `quality.yml` inputs `l2-runtime`, `l3-integration`, `l4` and related `l4-*` command/artifact/browser fields removed during the workflow_call input-limit trim in v2026.13; keep `worker` / `l2` / `l3` aliases with Z1 conflict checks. Drop redundant inputs (`coverage-artifact-name`, single-browser `l3-browser`, `l3-browser-directory`, per-artifact retention-day knobs) with fixed coverage/evidence names and 7-day retention.
+- Mark **v2026.12** as released (no longer “proposed”).
+
 ## v2026.13 - 2026-11-11
 
 - **Breaking — System0 quality slots**: align `quality.yml` with [System0 quality skill v1.3.0](https://github.com/nocoo/workflow/blob/main/agents/skills/system0-quality/SKILL.md). Remove `L1.5`; remap Worker runtime → **L2 Runtime**, API/integration → **L3 Integration**, user journeys → **L4 E2E** (generic command; optional Playwright). Canonical check names update (for example `S1: Types`, `L3: Integration`, `L4: E2E`). Strict `slot-status` requires 12 keys including `L4`; key `L1.5` fails with migration text.
@@ -8,9 +14,7 @@
 - **Breaking — release proof**: `release-source` requires successful `quality / Z1: Gate` (or `required-quality-check`) on the exact proven SHA by default.
 - `docs/slots.md` is implementation-only; slot definitions live in the skill. Migration table: v1 `L1.5`/`L2`/`L3` → System0 `L2`/`L3`/`L4` (see docs).
 
-## v2026.12 - proposed
-
-Proposed tag: `v2026.12` (patch release on top of `v2026.11`). Not published yet: the tag and the GitHub release are created by the maintainer after the provider self-tests and the representative consumer runs pass.
+## v2026.12 - 2026-11-10
 
 - Flatten the `quality.yml` check names: every slot is now a top-level job, so each slot renders exactly one check named `<ID>: <Canonical Name>` (`S1: Typecheck`, `S2: Lint`, `S3: Workflow Lint`, `G1: Secret Scan`, `G2: Dependency Vulnerabilities`, `B1: Build`, `L1: Unit Tests & Coverage`, `L1.5: Worker Runtime Tests`, `L2: API E2E`, `L3: Browser E2E`, `P1: Package Check`, `Z1: Gate`). The duplicated segments (`G1: Secret Scan / G1: Secret Scan`) and the runtime suffix (`L3: Browser E2E (bun on ubuntu-latest)`) are gone.
 - **Breaking**: the required check names change again. Recommend keeping only `quality / Z1: Gate` as the required check: the prefix is the caller job display name (its `name:` when set, otherwise its key), so the caller job key must be `quality` with no `name:` or a `name:` of exactly `quality`; the workflow `name:` is not part of the check name. Read the real displayed name (`<caller job> / <slot>`) from a CI run instead of guessing it.

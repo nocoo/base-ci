@@ -10,12 +10,15 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflow = readFileSync(join(root, '.github/workflows/deploy-worker.yml'), 'utf8');
 const action = readFileSync(join(root, '.github/actions/release-source/action.yml'), 'utf8');
 const selfTest = readFileSync(join(root, '.github/workflows/self-test-release.yml'), 'utf8');
+const providerPin = readFileSync(join(root, '.github/internal-provider-pin.txt'), 'utf8').trim();
 const pin = workflow.match(/nocoo\/base-ci\/\.github\/actions\/release-source@([a-f0-9]{40})/)?.[1];
 
 test('deploy-worker pins a full release-source SHA, not a relative composite path', () => {
+  assert.equal(pin, providerPin);
   assert.match(pin ?? '', /^[a-f0-9]{40}$/);
   assert.doesNotMatch(workflow, /uses: \.\/\.github\/actions\/release-source/);
   assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /required-quality-check: \$\{\{ inputs\.required-quality-check \}\}/);
 });
 
 test('deploy-worker public secrets, lock and environment stay on the called job', () => {
@@ -31,7 +34,7 @@ test('deploy-worker public secrets, lock and environment stay on the called job'
 
 test('deploy-worker pins verified Actions SHAs and validates the selected local CLI', () => {
   assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
-  assert.match(workflow, /nocoo\/base-ci\/\.github\/actions\/setup-js@2231caf82cf16f103f48cab467b3464b106d6604/);
+  assert.match(workflow, new RegExp(`nocoo/base-ci/\\.github/actions/setup-js@${providerPin}`));
   assert.match(workflow, /deploy-cli:[\s\S]*default: "wrangler"/);
   assert.match(workflow, /wrangler-version:[\s\S]*default: "lockfile"/);
   assert.match(workflow, /resolve-locked-wrangler/);
@@ -283,6 +286,7 @@ test('self-test-release runs helper tests and does not deploy', () => {
   assert.match(selfTest, /node --test \.github\/actions\/release-source\/resolve\.test\.mjs/);
   assert.match(selfTest, /unittest discover -s \.github\/actions\/resolve-locked-wrangler/);
   assert.match(selfTest, /node --test \.github\/actions\/release-source\/workflow-contract\.test\.mjs/);
+  assert.match(selfTest, /node --test \.github\/slots\/internal-pin\.test\.mjs/);
   assert.doesNotMatch(selfTest, /deploy-worker\.yml@/);
   assert.doesNotMatch(selfTest, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets/);
 });

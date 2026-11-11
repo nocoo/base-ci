@@ -1,5 +1,5 @@
 # Reusable Workers release. Pin callers to a full commit SHA.
-# Internal composite: nocoo/base-ci/.github/actions/release-source@2231caf82cf16f103f48cab467b3464b106d6604
+# Internal composite: nocoo/base-ci/.github/actions/release-source@e4598815d171e2281f77f27a4800ff8fc2537f3f (see .github/internal-provider-pin.txt)
 # Do not change that pin to ./.github/actions/release-source (caller checkout is consumer source).
 
 name: Deploy Worker
@@ -47,6 +47,14 @@ on:
         description: package.json path used when package-version-match is true
         type: string
         default: "package.json"
+      required-quality-check:
+        description: Required GitHub check-run name on the proven SHA (forwarded to release-source)
+        type: string
+        default: "quality / Z1: Gate"
+      require-quality-check:
+        description: Require the quality check to exist and succeed on the proven SHA
+        type: boolean
+        default: true
 
       package-manager:
         description: bun, npm, or pnpm
@@ -249,7 +257,7 @@ jobs:
 
       - name: Resolve release source
         id: source
-        uses: nocoo/base-ci/.github/actions/release-source@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/release-source@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           github-token: ${{ github.token }}
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
@@ -262,6 +270,8 @@ jobs:
           require-fresh-main: ${{ inputs.require-fresh-main }}
           package-version-match: ${{ inputs.package-version-match }}
           package-json-path: ${{ inputs.package-json-path }}
+          required-quality-check: ${{ inputs.required-quality-check }}
+          require-quality-check: ${{ inputs.require-quality-check }}
 
       - name: Checkout proven SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -330,12 +340,12 @@ jobs:
           (inputs.wrangler-version == '' || inputs.wrangler-version == 'lockfile') &&
           (inputs.deploy-script == '' || inputs.d1-migrations)
         id: locked-wrangler
-        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           working-directory: ${{ steps.paths.outputs.working-directory }}
 
       - name: Setup JS and frozen install
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}

@@ -19,9 +19,9 @@
 | G2 | `g2-dependency-vulnerabilities` | `G2: Dependencies` | `security` |
 | B1 | `b1-build` | `B1: Build` | `build` |
 | L1 | `l1-unit-tests` | `L1: Unit` | `unit`（作业始终运行以校验 `disabled-check-reasons`） |
-| L2 | `l2-runtime` | `L2: Runtime` | `l2-runtime` 或已弃用 `worker` |
-| L3 | `l3-integration` | `L3: Integration` | `l3-integration` 或已弃用 `l2` |
-| L4 | `l4-e2e` | `L4: E2E` | `l4` 或已弃用 `l3`；可选 Playwright（`l4-browsers` / `l3-browsers`） |
+| L2 | `l2-runtime` | `L2: Runtime` | 已弃用 `worker` |
+| L3 | `l3-integration` | `L3: Integration` | 已弃用 `l2` |
+| L4 | `l4-e2e` | `L4: E2E` | 已弃用 `l3`（语义为 L4）；可选 Playwright（`l3-browsers` / `l3-browser`） |
 | P1 | `p1-package-check` | `P1: Package` | `package-check` |
 | Z1 | `z1-gate` | `Z1: Gate` | 恒运行 |
 

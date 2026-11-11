@@ -46,11 +46,10 @@ test('quality.yml never calls another reusable workflow', () => {
   }
 });
 
-test('quality.yml wires the L4 multi-browser, prepare and evidence inputs', () => {
-  assert.match(quality, /l4-browsers:\n\s+description:.*\n\s+type: string\n\s+default: ""/);
+test('quality.yml wires the L4 job through deprecated l3 inputs and optional Playwright', () => {
   const block = jobBlock(quality, 'l4-e2e');
-  assert.match(block, /if: inputs\.l3 \|\| inputs\.l4/);
-  assert.match(block, /IN_BROWSERS: \$\{\{ inputs\.l4-browsers/);
+  assert.match(block, /if: inputs\.l3/);
+  assert.match(block, /IN_BROWSERS: \$\{\{ inputs\.l3-browsers/);
   assert.match(block, /playwright install --with-deps/);
 });
 
@@ -61,7 +60,7 @@ test('quality.yml Z1 gate needs every System0 slot job and validates declaration
     /needs: \[s1-typecheck, s2-lint, s3-workflow-lint, g1-secret-scan, g2-dependency-vulnerabilities, b1-build, l1-unit-tests, l2-runtime, l3-integration, l4-e2e, p1-package-check\]/,
   );
   assert.match(block, /SLOT_L4_ENABLED:/);
-  assert.match(block, /SLOT_L2_ENABLED: \$\{\{ inputs\.worker \|\| inputs\.l2-runtime \}\}/);
+  assert.match(block, /SLOT_L2_ENABLED: \$\{\{ inputs\.worker \}\}/);
   assert.match(block, /# SLOT_GATE_PYTHON_BEGIN/);
   const gate = quality.slice(quality.indexOf('# SLOT_GATE_PYTHON_BEGIN'), quality.indexOf('# SLOT_GATE_PYTHON_END'));
   for (const slot of ['S1', 'S2', 'S3', 'G1', 'G2', 'B1', 'L1', 'L2', 'L3', 'L4', 'P1', 'Z1']) {

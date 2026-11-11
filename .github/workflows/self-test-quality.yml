@@ -172,8 +172,8 @@ jobs:
         "lint": "generic L4 fixture",
         "unit": "generic L4 fixture",
         "security": "generic L4 fixture"}
-      l4: true
-      l4-command: "echo 'generic l4 journey' && test -f package.json"
+      l3: true
+      l3-command: "echo 'generic l4 journey' && test -f package.json"
 
   test-quality-l4-evidence:
     name: "Quality Gate (L4 multi-browser + evidence upload)"

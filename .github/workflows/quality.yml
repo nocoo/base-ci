@@ -298,7 +298,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -308,7 +308,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -372,7 +372,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -382,7 +382,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -448,7 +448,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -458,7 +458,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -652,7 +652,7 @@ jobs:
 
       - name: Setup JS and dependencies (if security-command requires runtime)
         if: inputs.security-command != ''
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -662,7 +662,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Install security scanners (gitleaks + osv-scanner)
-        uses: nocoo/base-ci/.github/actions/setup-security-scanners@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@cdf4375b850f3dd955a1087b96748ce237c2de33
 
       - name: "G1: Gitleaks Secret Scan"
         shell: bash
@@ -721,7 +721,7 @@ jobs:
           persist-credentials: false
 
       - name: Install security scanners (gitleaks + osv-scanner)
-        uses: nocoo/base-ci/.github/actions/setup-security-scanners@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@cdf4375b850f3dd955a1087b96748ce237c2de33
 
       - name: "G2: OSV Dependency Scan"
         shell: bash
@@ -784,7 +784,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -794,7 +794,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -863,7 +863,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -873,7 +873,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
@@ -931,7 +931,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -941,7 +941,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
@@ -1022,7 +1022,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -1032,7 +1032,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
@@ -1081,7 +1081,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/setup-js@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -1091,7 +1091,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@f8276c403a2ac61500deb936708020bcf81a3d08
+        uses: nocoo/base-ci/.github/actions/configure-env@cdf4375b850f3dd955a1087b96748ce237c2de33
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}

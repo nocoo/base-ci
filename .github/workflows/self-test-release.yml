@@ -29,7 +29,9 @@ jobs:
           python3 -m unittest discover -s .github/actions/resolve-locked-wrangler -p 'test_*.py'
 
       - name: Workflow contract tests
-        run: node --test .github/actions/release-source/workflow-contract.test.mjs
+        run: |
+          node --test .github/actions/release-source/workflow-contract.test.mjs
+          node --test .github/slots/internal-pin.test.mjs
 
       - name: Validate YAML and public interface
         run: |
@@ -70,9 +72,13 @@ jobs:
           assert job['concurrency']['cancel-in-progress'] is False
           env_name = job['environment']['name']
           assert 'inputs.environment' in env_name
+          pin = pathlib.Path('.github/internal-provider-pin.txt').read_text().strip()
+          assert inputs['required-quality-check']['default'] == 'quality / Z1: Gate'
           uses = [step.get('uses', '') for step in job['steps'] if isinstance(step, dict)]
-          assert any(item.startswith('nocoo/base-ci/.github/actions/release-source@2231caf82cf16f103f48cab467b3464b106d6604') for item in uses)
-          assert any(item.startswith('nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604') for item in uses)
+          assert any(item.startswith(f'nocoo/base-ci/.github/actions/release-source@{pin}') for item in uses)
+          assert any(item.startswith(f'nocoo/base-ci/.github/actions/setup-js@{pin}') for item in uses)
+          source_step = next(step for step in job['steps'] if step.get('id') == 'source' or step.get('name') == 'Resolve release source')
+          assert 'required-quality-check' in source_step.get('with', {})
           assert not any(item.startswith('./.github/actions/release-source') for item in uses)
           text = pathlib.Path('.github/workflows/deploy-worker.yml').read_text()
           assert 'wrangler-action' not in text

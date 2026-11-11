@@ -51,6 +51,14 @@ on:
         description: Optional comma-separated peers to ping after joining (defaults to VPS_HOST when tailscale is true)
         type: string
         default: ''
+      required-quality-check:
+        description: Required GitHub check-run name on the proven SHA (forwarded to release-source)
+        type: string
+        default: 'quality / Z1: Gate'
+      require-quality-check:
+        description: Require the quality check to exist and succeed on the proven SHA
+        type: boolean
+        default: true
     secrets:
       VPS_HOST:
         required: false
@@ -102,7 +110,7 @@ jobs:
       run-id: ${{ steps.source.outputs.source-run-id }}
     steps:
       - id: source
-        uses: nocoo/base-ci/.github/actions/release-source@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/release-source@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
           expected-workflow-name: ${{ inputs.expected-workflow-name }}
@@ -110,8 +118,10 @@ jobs:
           tag: ${{ inputs.tag }}
           source-run-id: ${{ inputs.source-run-id }}
           github-token: ${{ github.token }}
+          required-quality-check: ${{ inputs.required-quality-check }}
+          require-quality-check: ${{ inputs.require-quality-check }}
       - id: plan
-        uses: nocoo/base-ci/.github/actions/docker-manifest@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/docker-manifest@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ steps.source.outputs.target-sha }}
@@ -213,7 +223,7 @@ jobs:
           path: base-ci-digests
           merge-multiple: true
       - id: manifest
-        uses: nocoo/base-ci/.github/actions/docker-manifest@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/docker-manifest@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ needs.source.outputs.sha }}
@@ -238,7 +248,7 @@ jobs:
           echo '::error::SSH host is unreachable'
           exit 1
       - name: Recheck proven source before deployment
-        uses: nocoo/base-ci/.github/actions/release-source@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/release-source@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           expected-workflow-path: ${{ inputs.expected-workflow-path }}
           expected-workflow-name: ${{ inputs.expected-workflow-name }}
@@ -247,8 +257,10 @@ jobs:
           source-run-id: ${{ needs.source.outputs.run-id }}
           source-sha: ${{ needs.source.outputs.sha }}
           github-token: ${{ github.token }}
+          required-quality-check: ${{ inputs.required-quality-check }}
+          require-quality-check: ${{ inputs.require-quality-check }}
       - name: Deploy verified images
-        uses: nocoo/base-ci/.github/actions/ssh-deploy@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/ssh-deploy@e4598815d171e2281f77f27a4800ff8fc2537f3f
         env:
           IMAGE_SHA: ${{ needs.source.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}

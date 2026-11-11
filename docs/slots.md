@@ -19,9 +19,9 @@
 | G2 | `g2-dependency-vulnerabilities` | `G2: Dependencies` | `security` |
 | B1 | `b1-build` | `B1: Build` | `build` |
 | L1 | `l1-unit-tests` | `L1: Unit` | `unit`（作业始终运行以校验 `disabled-check-reasons`） |
-| L2 | `l2-runtime` | `L2: Runtime` | 已弃用 `worker` |
-| L3 | `l3-integration` | `L3: Integration` | 已弃用 `l2` |
-| L4 | `l4-e2e` | `L4: E2E` | 已弃用 `l3`（语义为 L4）；可选 Playwright（`l3-browsers` / `l3-browser`） |
+| L2 | `l2-runtime` | `L2: Runtime` | `l2-runtime`；已弃用 `worker` |
+| L3 | `l3-integration` | `L3: Integration` | `l3-integration`；已弃用 `l2` |
+| L4 | `l4-e2e` | `L4: E2E` | `l4` 与 `l4-*`；已弃用 `l3` / `l3-*`（语义为 L4）；Playwright 用 `l4-browsers`（或弃用 `l3-browsers`） |
 | P1 | `p1-package-check` | `P1: Package` | `package-check` |
 | Z1 | `z1-gate` | `Z1: Gate` | 恒运行 |
 
@@ -69,8 +69,9 @@ G1 在 CI 中对检出内容执行 `gitleaks detect --no-git`。G2 扫描调用�
 ## L4 通用命令与 Playwright
 
 - 仅设置 `l4: true` 与 `l4-command`（或弃用别名 `l3` + `l3-command`）时 **不安装** Playwright。
-- 当 `l4-browsers`、`l3-browsers`、`l4-browser` 或 `l3-browser` 非空时，安装对应浏览器后再执行 E2E 命令。
-- 证据工件：`l4-artifact-*`（或弃用 `l3-artifact-*`）。
+- 当 `l4-browsers` 或弃用 `l3-browsers` 非空时，安装对应浏览器后再执行 E2E 命令。
+- 证据工件：`l4-artifact-*`（或弃用 `l3-artifact-*`）；保留天数固定为 7 天。
+- 同时传入规范输入与弃用别名且取值冲突时，Z1 会失败。
 
 ## 原生（macOS）骨架
 

@@ -99,6 +99,10 @@ on:
         description: "Deprecated alias for L3 Integration (inputs.l3-integration); enables the L3 Integration job"
         type: boolean
         default: false
+      l3-integration:
+        description: "Run L3 Integration tests (HTTP, MCP, protocol, storage); preferred over l2"
+        type: boolean
+        default: false
       l2-command:
         description: "L2 test command"
         type: string
@@ -111,29 +115,45 @@ on:
         description: "Path of the L2 evidence to upload (empty = no upload)"
         type: string
         default: ""
-      l2-artifact-retention-days:
-        description: "L2 evidence artifact retention days"
-        type: number
-        default: 7
 
       l3:
         description: "Deprecated alias for L4 E2E; enables the L4 E2E job"
         type: boolean
         default: false
+      l4:
+        description: "Run L4 E2E (CLI, native, workflow, or browser journeys)"
+        type: boolean
+        default: false
+      l4-command:
+        description: "L4 E2E command (preferred over l3-command)"
+        type: string
+        default: ""
+      l4-browsers:
+        description: "Space-separated Playwright browsers to install for L4 (optional; preferred over l3-browsers)"
+        type: string
+        default: ""
+      l4-browser-directory:
+        description: "Playwright browser installation directory for L4"
+        type: string
+        default: ""
+      l4-prepare-command:
+        description: "Optional setup command for L4 (used when set, otherwise l3-prepare-command or prepare-command)"
+        type: string
+        default: ""
+      l4-artifact-name:
+        description: "Name of the L4 evidence artifact (empty = no upload)"
+        type: string
+        default: ""
+      l4-artifact-path:
+        description: "Path of the L4 evidence to upload (multiline allowed, empty = no upload)"
+        type: string
+        default: ""
       l3-command:
         description: "L3 test command"
         type: string
         default: ""
       l3-browsers:
-        description: "Space-separated Playwright browsers to install (preferred over l3-browser)"
-        type: string
-        default: ""
-      l3-browser:
-        description: "Deprecated Playwright browser for L4; leave empty for generic (non-browser) L4 commands"
-        type: string
-        default: ""
-      l3-browser-directory:
-        description: "Playwright browser installation directory"
+        description: "Deprecated; space-separated Playwright browsers for L4 (preferred: l4-browsers)"
         type: string
         default: ""
       l3-prepare-command:
@@ -148,13 +168,13 @@ on:
         description: "Path of the L3 evidence to upload (multiline allowed, empty = no upload)"
         type: string
         default: ""
-      l3-artifact-retention-days:
-        description: "L3 evidence artifact retention days"
-        type: number
-        default: 7
 
       worker:
         description: "Deprecated alias for L2 Runtime; enables the L2 Runtime job"
+        type: boolean
+        default: false
+      l2-runtime:
+        description: "Run L2 Runtime tests (workerd, vitest-pool-workers, miniflare); preferred over worker"
         type: boolean
         default: false
       worker-command:
@@ -224,9 +244,6 @@ on:
         default: ""
 
       # Coverage and Artifacts
-      coverage-artifact-name:
-        type: string
-        default: coverage-report
       coverage-path:
         description: "Path to coverage output directory (empty = skip upload)"
         type: string
@@ -281,7 +298,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -291,7 +308,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -355,7 +372,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -365,7 +382,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -431,7 +448,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -441,7 +458,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -520,7 +537,7 @@ jobs:
         if: inputs.unit && inputs.coverage-path != '' && !cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ inputs.coverage-artifact-name }}
+          name: coverage-report
           path: ${{ inputs.coverage-path }}
           retention-days: 7
           if-no-files-found: error
@@ -635,7 +652,7 @@ jobs:
 
       - name: Setup JS and dependencies (if security-command requires runtime)
         if: inputs.security-command != ''
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -645,7 +662,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Install security scanners (gitleaks + osv-scanner)
-        uses: nocoo/base-ci/.github/actions/setup-security-scanners@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@e4598815d171e2281f77f27a4800ff8fc2537f3f
 
       - name: "G1: Gitleaks Secret Scan"
         shell: bash
@@ -704,7 +721,7 @@ jobs:
           persist-credentials: false
 
       - name: Install security scanners (gitleaks + osv-scanner)
-        uses: nocoo/base-ci/.github/actions/setup-security-scanners@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@e4598815d171e2281f77f27a4800ff8fc2537f3f
 
       - name: "G2: OSV Dependency Scan"
         shell: bash
@@ -767,7 +784,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -777,7 +794,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
 
@@ -834,7 +851,7 @@ jobs:
   # ─────────────────────────────────────────────────────
   l3-integration:
     name: "L3: Integration"
-    if: inputs.l2
+    if: inputs.l2 || inputs.l3-integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -846,7 +863,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -856,7 +873,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
@@ -894,7 +911,7 @@ jobs:
         with:
           name: ${{ inputs.l2-artifact-name }}
           path: ${{ inputs.l2-artifact-path }}
-          retention-days: ${{ inputs.l2-artifact-retention-days }}
+          retention-days: 7
           if-no-files-found: error
 
   # ─────────────────────────────────────────────────────
@@ -902,7 +919,7 @@ jobs:
   # ─────────────────────────────────────────────────────
   l4-e2e:
     name: "L4: E2E"
-    if: inputs.l3
+    if: inputs.l3 || inputs.l4
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -914,7 +931,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -924,27 +941,27 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
 
       - name: Prepare environment
-        if: inputs.l3-prepare-command != '' || inputs.prepare-command != ''
+        if: inputs.l4-prepare-command != '' || inputs.l3-prepare-command != '' || inputs.prepare-command != ''
         shell: bash
         working-directory: ${{ inputs.working-directory }}
         env:
-          IN_PREPARE: ${{ inputs.l3-prepare-command != '' && inputs.l3-prepare-command || inputs.prepare-command }}
+          IN_PREPARE: ${{ inputs.l4-prepare-command != '' && inputs.l4-prepare-command || (inputs.l3-prepare-command != '' && inputs.l3-prepare-command || inputs.prepare-command) }}
         run: |
           echo "Executing L4 prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
       - name: Install Playwright browsers
-        if: inputs.l3-browsers != '' || inputs.l3-browser != ''
+        if: inputs.l4-browsers != '' || inputs.l3-browsers != ''
         shell: bash
-        working-directory: ${{ inputs.l3-browser-directory != '' && inputs.l3-browser-directory || inputs.working-directory }}
+        working-directory: ${{ inputs.l4-browser-directory != '' && inputs.l4-browser-directory || inputs.working-directory }}
         env:
-          IN_BROWSERS: ${{ inputs.l3-browsers != '' && inputs.l3-browsers || inputs.l3-browser }}
+          IN_BROWSERS: ${{ inputs.l4-browsers != '' && inputs.l4-browsers || inputs.l3-browsers }}
           PKG_MGR: ${{ inputs.package-manager }}
         run: |
           set -euo pipefail
@@ -966,7 +983,7 @@ jobs:
         shell: bash
         working-directory: ${{ inputs.working-directory }}
         env:
-          IN_CMD: ${{ inputs.l3-command != '' && inputs.l3-command || (inputs.package-manager == 'bun' && 'bun run test:e2e:pw' || 'npm run test:e2e:pw') }}
+          IN_CMD: ${{ inputs.l4-command != '' && inputs.l4-command || (inputs.l3-command != '' && inputs.l3-command || (inputs.package-manager == 'bun' && 'bun run test:e2e:pw' || 'npm run test:e2e:pw')) }}
         run: |
           set -euo pipefail
           echo "Running L4 E2E: $IN_CMD"
@@ -980,12 +997,12 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Upload L4 evidence
-        if: always() && inputs.l3-artifact-name != '' && inputs.l3-artifact-path != ''
+        if: always() && ((inputs.l4-artifact-name != '' && inputs.l4-artifact-path != '') || (inputs.l3-artifact-name != '' && inputs.l3-artifact-path != ''))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ inputs.l3-artifact-name }}
-          path: ${{ inputs.l3-artifact-path }}
-          retention-days: ${{ inputs.l3-artifact-retention-days }}
+          name: ${{ inputs.l4-artifact-name != '' && inputs.l4-artifact-name || inputs.l3-artifact-name }}
+          path: ${{ inputs.l4-artifact-path != '' && inputs.l4-artifact-path || inputs.l3-artifact-path }}
+          retention-days: 7
           if-no-files-found: error
 
   # ─────────────────────────────────────────────────────
@@ -993,7 +1010,7 @@ jobs:
   # ─────────────────────────────────────────────────────
   l2-runtime:
     name: "L2: Runtime"
-    if: inputs.worker
+    if: inputs.worker || inputs.l2-runtime
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -1005,7 +1022,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -1015,7 +1032,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
@@ -1064,7 +1081,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup JS and dependencies
-        uses: nocoo/base-ci/.github/actions/setup-js@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/setup-js@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -1074,7 +1091,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@2231caf82cf16f103f48cab467b3464b106d6604
+        uses: nocoo/base-ci/.github/actions/configure-env@e4598815d171e2281f77f27a4800ff8fc2537f3f
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}
@@ -1151,13 +1168,21 @@ jobs:
           SLOT_L1_OUTCOME: ${{ needs.l1-unit-tests.outputs.l1-unit }}
           SLOT_L1_SHA: ${{ needs.l1-unit-tests.outputs.tested-sha }}
           SLOT_L1_JOB_RESULT: ${{ needs.l1-unit-tests.result }}
-          SLOT_L2_ENABLED: ${{ inputs.worker }}
+          SLOT_L2_ENABLED: ${{ inputs.worker || inputs.l2-runtime }}
           SLOT_L2_OUTCOME: ${{ needs.l2-runtime.result }}
           SLOT_L2_SHA: ${{ needs.l2-runtime.outputs.tested-sha }}
-          SLOT_L3_ENABLED: ${{ inputs.l2 }}
+          SLOT_L3_ENABLED: ${{ inputs.l2 || inputs.l3-integration }}
           SLOT_L3_OUTCOME: ${{ needs.l3-integration.result }}
           SLOT_L3_SHA: ${{ needs.l3-integration.outputs.tested-sha }}
-          SLOT_L4_ENABLED: ${{ inputs.l3 }}
+          SLOT_L4_ENABLED: ${{ inputs.l3 || inputs.l4 }}
+          SLOT_WORKER: ${{ inputs.worker }}
+          SLOT_L2_RUNTIME: ${{ inputs.l2-runtime }}
+          SLOT_L2_ALIAS: ${{ inputs.l2 }}
+          SLOT_L3_INTEGRATION: ${{ inputs.l3-integration }}
+          SLOT_L3_ALIAS: ${{ inputs.l3 }}
+          SLOT_L4_INPUT: ${{ inputs.l4 }}
+          SLOT_L4_CMD: ${{ inputs.l4-command }}
+          SLOT_L3_CMD: ${{ inputs.l3-command }}
           SLOT_L4_OUTCOME: ${{ needs.l4-e2e.result }}
           SLOT_L4_SHA: ${{ needs.l4-e2e.outputs.tested-sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -1188,7 +1213,7 @@ jobs:
               "P1": "P1",
           }
           DEPRECATED_SLOT_KEYS = {
-              "L1.5": "Use L2 (Runtime) instead of L1.5; enable the worker input.",
+              "L1.5": "Use L2 (Runtime) instead of L1.5; enable worker or l2-runtime.",
           }
           SLOT_JOB_NAMES = {
               "S1": "S1: Types",
@@ -1212,6 +1237,48 @@ jobs:
           def fail(message):
               sys.stderr.write(f"::error::{message}\n")
               sys.exit(1)
+
+
+          def verify_input_aliases():
+              def bool_conflict(legacy, canonical, legacy_name, canonical_name):
+                  legacy_v = legacy.lower() == "true"
+                  canonical_v = canonical.lower() == "true"
+                  if legacy_v == canonical_v:
+                      return
+                  # Default false on the canonical input is not treated as an explicit disable
+                  # when the legacy alias is enabled (and vice versa).
+                  if legacy_v and not canonical_v:
+                      return
+                  if canonical_v and not legacy_v:
+                      return
+                  fail(
+                      f"Conflicting boolean inputs {legacy_name}={legacy} and "
+                      f"{canonical_name}={canonical}; use one name or matching values"
+                  )
+
+              bool_conflict(
+                  os.environ.get("SLOT_WORKER", ""),
+                  os.environ.get("SLOT_L2_RUNTIME", ""),
+                  "worker",
+                  "l2-runtime",
+              )
+              bool_conflict(
+                  os.environ.get("SLOT_L2_ALIAS", ""),
+                  os.environ.get("SLOT_L3_INTEGRATION", ""),
+                  "l2",
+                  "l3-integration",
+              )
+              bool_conflict(
+                  os.environ.get("SLOT_L3_ALIAS", ""),
+                  os.environ.get("SLOT_L4_INPUT", ""),
+                  "l3",
+                  "l4",
+              )
+
+              l4_cmd = os.environ.get("SLOT_L4_CMD", "").strip()
+              l3_cmd = os.environ.get("SLOT_L3_CMD", "").strip()
+              if l4_cmd and l3_cmd and l4_cmd != l3_cmd:
+                  fail("Conflicting l4-command and l3-command; set only one or matching values")
 
 
           def collect_slots():
@@ -1449,6 +1516,7 @@ jobs:
 
 
           def main():
+              verify_input_aliases()
               raw = os.environ.get("SLOT_STATUS", "")
               slots = collect_slots()
               declarations = None

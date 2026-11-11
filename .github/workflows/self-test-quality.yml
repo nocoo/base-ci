@@ -131,7 +131,6 @@ jobs:
         mkdir -p coverage &&
         node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info test/check.test.mjs
       coverage-path: .github/fixtures/security-basic/coverage
-      coverage-artifact-name: coverage-report-strict-slots
       workflow-lint: true
       workflow-lint-files: .github/workflows/quality.yml
       slot-status: >-
@@ -204,7 +203,6 @@ jobs:
         mkdir -p l3-evidence && echo 'l3 evidence' > l3-evidence/report.txt
       l3-artifact-name: l3-evidence
       l3-artifact-path: .github/fixtures/l3-basic/l3-evidence
-      l3-artifact-retention-days: 3
 
   # ─────────────────────────────────────────────────────
   # 3. Security workflow invocation

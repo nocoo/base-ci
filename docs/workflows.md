@@ -56,7 +56,7 @@ Commands default to the selected package manager's `run typecheck`, `run lint`, 
 
 ### Browser and API evidence
 
-`l3-browsers` installs a space-separated browser list through the package manager (`playwright install --with-deps`), so `l3-browsers: "chromium webkit"` installs both. It takes precedence over the older single-browser `l3-browser` input, which keeps its `chromium` default.
+`l4-browsers` (or the deprecated `l3-browsers`) installs a space-separated browser list through the package manager (`playwright install --with-deps`), so `l4-browsers: "chromium webkit"` installs both.
 
 `l3-prepare-command` prepares the L3 job (for example a build before the E2E run) and falls back to the shared `prepare-command` when it is empty. `l2-command` and `l3-command` stay separate from their preparation steps.
 
@@ -66,7 +66,7 @@ jobs:
     uses: nocoo/base-ci/.github/workflows/quality.yml@BASE_CI_SHA
     with:
       l3: true
-      l3-browsers: "chromium webkit"
+      l4-browsers: "chromium webkit"
       l3-prepare-command: "bun run build"
       l3-command: "bun run test:e2e:pw"
       l3-artifact-name: "playwright-report"
@@ -177,7 +177,7 @@ With `runtime: none`, Node or Python can be selected without installing JS packa
 
 `quality.yml` runs every slot on `ubuntu-latest` and has no OS matrix. A repository that needs macOS runners for its slot jobs uses the native pattern in the [slot standard](slots.md): a repo-local `on: workflow_call` workflow whose slot jobs are named exactly `<ID>: <Name>`, called by a job whose key is `quality` (with no `name:`, or a `name:` of exactly `quality`), with a repo-local `Z1: Gate` that needs every slot job. Do not nest `quality.yml` or `test-job.yml` for those jobs: nesting adds a runtime suffix and a duplicated prefix to the check names.
 
-Test jobs configure the environment and run `pre-command` before browser installation. `browser-working-directory` chooses the package containing Playwright; `quality.yml` exposes this as `l3-browser-directory`. Set `artifact-name`, `artifact-path` and `artifact-retention-days` to preserve project test evidence.
+Test jobs configure the environment and run `pre-command` before browser installation. `browser-working-directory` chooses the package containing Playwright; `quality.yml` exposes this as `l4-browser-directory`. Set `l4-artifact-name` and `l4-artifact-path` (or the deprecated `l3-artifact-*` aliases) to preserve project test evidence.
 
 Pass public environment values through `env-json`. Pass only the named test credentials a job needs through the `test-env-json` secret. Values are validated and individually masked; multiline strings are preserved. Do not serialize the entire `secrets` context into a test environment. Caller-level `env` is not automatically inherited by a reusable workflow.
 
@@ -200,6 +200,10 @@ Both deployment workflows use [release-source](../.github/actions/release-source
 | `expected-branch` | Expected CI branch, normally `main`; pass the tag name when proving tag CI |
 | `source-run-id` | Explicit successful CI run ID, including manual deployments |
 | `tag` | Optional tag, resolved to a commit and checked against the proven CI run |
+| `required-quality-check` | Check-run name that must succeed on the proven SHA (default `quality / Z1: Gate`) |
+| `require-quality-check` | When true, missing or failed quality evidence fails the deploy |
+
+`deploy-worker.yml` and `deploy-docker.yml` expose the same defaults and forward both fields to `release-source`.
 
 There is no fallback to `github.sha` or an unrelated latest green run. PR and fork evidence is rejected. Continuous deployments check the branch tip again immediately before migration/deployment. Tagged releases prove the tag's exact commit. The source action and Worker template additionally support an expected `source-sha` and optional tag/package-version matching.
 

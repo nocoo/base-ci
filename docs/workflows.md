@@ -8,7 +8,7 @@ Consumers keep their triggers, project commands, deployment environment and a fe
 
 | Workflow | Use it for |
 | --- | --- |
-| [quality.yml](../.github/workflows/quality.yml) | Bun, npm or pnpm slot gate: S1 typecheck, S2 lint, S3 workflow lint, G1/G2 security, B1 build, L1 unit tests, L1.5 Worker, L2/L3 end-to-end tests, P1 package check, Z1 aggregate |
+| [quality.yml](../.github/workflows/quality.yml) | Bun, npm or pnpm System0 slot gate: S1–S3, G1/G2, B1, L1–L4, P1, Z1 (definitions in the [System0 quality skill](https://github.com/nocoo/workflow/blob/main/agents/skills/system0-quality/SKILL.md); wiring in [slots.md](slots.md)) |
 | [test-job.yml](../.github/workflows/test-job.yml) | One command with shared setup, a caller-owned runner matrix, Python or Node without JS dependencies, and optional browser/report support |
 | [security.yml](../.github/workflows/security.yml) | Multiple lockfiles, directory or full-history secret scanning, or an existing project security gate |
 | [workflow-lint.yml](../.github/workflows/workflow-lint.yml) | Actionlint, immutable base-ci references, optional required release template and yamllint |
@@ -17,7 +17,7 @@ Consumers keep their triggers, project commands, deployment environment and a fe
 
 The workflow files define the complete input and output contracts. `bun-quality.yml` is the older string-switch interface; new migrations use `quality.yml`. Historical behavior remains available through immutable commits and the `v2026.1`–`v2026.6` tags. The old moving `v2026` alias is not an upgrade policy.
 
-Checks are named after their [CI slot](slots.md) (`S1`, `S2`, `S3`, `G1`, `G2`, `B1`, `L1`, `L1.5`, `L2`, `L3`, `P1`, `Z1`), so repositories can be compared by slot number. Every slot of `quality.yml` is a top-level job, so each slot renders exactly one check named `<ID>: <Canonical Name>` (for example `quality / G1: Secret Scan`). `bun-quality.yml` keeps its old job names and is not affected by the slot renames.
+Checks are named after [System0 slots](slots.md) (`S1` … `L4`, `P1`, `Z1`). Every slot of `quality.yml` is a top-level job, so each slot renders exactly one check named `<ID>: <Canonical Name>` (for example `quality / G1: Secrets`). `bun-quality.yml` keeps its legacy job names.
 
 ## JavaScript CI
 
@@ -50,7 +50,7 @@ Commands default to the selected package manager's `run typecheck`, `run lint`, 
 
 `prepare-command` runs before checks in each relevant isolated job. Use it when tests need a built library. Enabling the separate `build` job does not put its output in other jobs. Worker preparation is separate: `worker-prepare-command` defaults to empty.
 
-`quality.yml` runs every slot as its own top-level job: `S1: Typecheck`, `S2: Lint`, `S3: Workflow Lint`, `G1: Secret Scan`, `G2: Dependency Vulnerabilities`, `B1: Build`, `L1: Unit Tests & Coverage`, `L1.5: Worker Runtime Tests`, `L2: API E2E`, `L3: Browser E2E`, `P1: Package Check` and `Z1: Gate`. Typecheck and lint are independent jobs with their own check, duration and tested SHA. The `L1: Unit Tests & Coverage` job always runs so it can validate `disabled-check-reasons`; its unit step is skipped when `unit` is false. No slot job uses `strategy.matrix`, so a check name stays exactly `quality / <ID>: <Name>`; several apps or architectures are built or tested serially inside one slot job.
+`quality.yml` runs every slot as its own top-level job: `S1: Types`, `S2: Lint`, `S3: Workflow`, `G1: Secrets`, `G2: Dependencies`, `B1: Build`, `L1: Unit`, `L2: Runtime`, `L3: Integration`, `L4: E2E`, `P1: Package` and `Z1: Gate`. Typecheck and lint are independent jobs with their own check, duration and tested SHA. The `L1: Unit Tests & Coverage` job always runs so it can validate `disabled-check-reasons`; its unit step is skipped when `unit` is false. No slot job uses `strategy.matrix`, so a check name stays exactly `quality / <ID>: <Name>`; several apps or architectures are built or tested serially inside one slot job.
 
 `coverage-path` is explicitly opt-in. It must point to a real report, relative to the repository root. A requested missing report fails the job. Build artifacts use `artifact-name` and `artifact-paths`. The successful aggregate emits `tested-sha` only after every enabled job succeeds and reports the same checked out commit.
 
@@ -108,9 +108,9 @@ jobs:
         "G2": {"status": "impl"},
         "B1": {"status": "todo", "reason": "build output is not split yet"},
         "L1": {"status": "impl"},
-        "L1.5": {"status": "na", "reason": "not a Worker repository"},
-        "L2": {"status": "impl"},
-        "L3": {"status": "na", "reason": "no browser UI"},
+        "L2": {"status": "na", "reason": "not a Worker repository"},
+        "L3": {"status": "impl"},
+        "L4": {"status": "na", "reason": "no user journeys"},
         "P1": {"status": "impl"},
         "Z1": {"status": "impl"}}
 ```
@@ -121,7 +121,7 @@ jobs:
 
 `na` and `todo` need a non-empty reason. `impl` must match reality: the slot has to be enabled, run and report the same `tested-sha` as every other implemented slot. The full rules, the old input mapping and the migration steps live in the [slot standard](slots.md).
 
-The slot renames change the job titles behind branch protection, not the complete check-run names: `Quality Gate Aggregate` becomes `Z1: Gate`, `G2: Security` becomes `G1: Secret Scan` plus `G2: Dependency Vulnerabilities`, `Build` becomes `B1: Build`, `Worker Tests` becomes `L1.5: Worker Runtime Tests`, `Package Check` becomes `P1: Package Check` and `L1: Quality & Tests` becomes `L1: Unit Tests & Coverage`. The check-run name that branch protection accepts carries the caller prefix: `quality / Z1: Gate`, not the bare job title `Z1: Gate`. Since v2026.12 every slot of `quality.yml` is a top-level job, so the check names have no duplicated segment and no runtime suffix any more: `quality / L3: Browser E2E` instead of `quality / L3: Browser E2E / L3: Browser E2E (bun on ubuntu-latest)`. Typecheck and lint are separate checks again: `quality / S1: Typecheck` and `quality / S2: Lint`. A standalone `security.yml` call is named `G1 + G2: Security Scan` and a standalone `workflow-lint.yml` call is named `S3: Workflow Lint`. Release source proof does not depend on job names.
+v2026.13 aligns check suffixes with the System0 skill (`S1: Types`, `L3: Integration`, `L4: E2E`, …). See [CHANGELOG](../CHANGELOG.md) and [slots.md](slots.md) for the v1 → System0 mapping. Release source proof also requires `quality / Z1: Gate` on the proven SHA (configurable via `release-source` inputs).
 
 GitHub prefixes the required check name with the caller job, so the displayed name depends on how the consumer calls the workflow. The prefix is the caller job's display name: its `name:` when set, otherwise its job key. Keep the caller job key `quality` and either omit `jobs.quality.name` or set it exactly to `quality`, otherwise the prefix changes (for example `CI / Z1: Gate`). The workflow `name:` is only a UI grouping and is not part of the check name. Upgrade first, read the real name from a CI run, and only then update branch protection — do not guess it. Requiring only `quality / Z1: Gate` is enough: the gate already verifies the declarations, the enabled slots and their tested SHA. `Z1: Gate` on its own is the job title, not the check name that branch protection accepts.
 

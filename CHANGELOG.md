@@ -1,5 +1,13 @@
 # Changelog
 
+## v2026.13 - 2026-11-11
+
+- **Breaking — System0 quality slots**: align `quality.yml` with [System0 quality skill v1.3.0](https://github.com/nocoo/workflow/blob/main/agents/skills/system0-quality/SKILL.md). Remove `L1.5`; remap Worker runtime → **L2 Runtime**, API/integration → **L3 Integration**, user journeys → **L4 E2E** (generic command; optional Playwright). Canonical check names update (for example `S1: Types`, `L3: Integration`, `L4: E2E`). Strict `slot-status` requires 12 keys including `L4`; key `L1.5` fails with migration text.
+- Keep deprecated boolean aliases: `worker` → L2, `l2` → L3, `l3` → L4; add preferred `l2-runtime`, `l3-integration`, `l4` and `l4-*` inputs. Legacy empty `slot-status` unchanged.
+- Z1 writes a GitHub Step summary table (per-slot status, reason, result, duration) and workflow duration vs 5m target / 10m reference.
+- **Breaking — release proof**: `release-source` requires successful `quality / Z1: Gate` (or `required-quality-check`) on the exact proven SHA by default.
+- `docs/slots.md` is implementation-only; slot definitions live in the skill. Migration table: v1 `L1.5`/`L2`/`L3` → System0 `L2`/`L3`/`L4` (see docs).
+
 ## v2026.12 - proposed
 
 Proposed tag: `v2026.12` (patch release on top of `v2026.11`). Not published yet: the tag and the GitHub release are created by the maintainer after the provider self-tests and the representative consumer runs pass.

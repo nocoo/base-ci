@@ -142,22 +142,42 @@ jobs:
         "G2": {"status": "impl"},
         "B1": {"status": "todo", "reason": "fixture has no build output"},
         "L1": {"status": "impl"},
-        "L1.5": {"status": "na", "reason": "fixture has no Worker runtime"},
-        "L2": {"status": "na", "reason": "fixture exposes no HTTP API"},
-        "L3": {"status": "na", "reason": "fixture has no browser UI"},
+        "L2": {"status": "na", "reason": "fixture has no Worker runtime"},
+        "L3": {"status": "na", "reason": "fixture exposes no HTTP API"},
+        "L4": {"status": "na", "reason": "fixture has no browser UI"},
         "P1": {"status": "todo", "reason": "fixture is not published as a package"},
         "Z1": {"status": "impl"}}
 
   # ─────────────────────────────────────────────────────
-  # 2c. Quality workflow invocation with the L3 multi-browser,
-  #     L3 prepare command and L3 evidence upload inputs.
+  # 2c. Quality workflow invocation with the L4 multi-browser,
+  #     prepare command and evidence upload inputs (l3-* aliases).
   #     The fixture ships a Playwright CLI stub, so the browser
   #     list is proven to arrive as separate arguments without
   #     downloading a real browser.
   # ─────────────────────────────────────────────────────
-  test-quality-l3-evidence:
-    name: "Quality Gate (L3 multi-browser + evidence upload)"
+  test-quality-l4-generic:
+    name: "Quality Gate (L4 generic command, no Playwright)"
     needs: test-quality-strict-slots
+    uses: ./.github/workflows/quality.yml
+    with:
+      package-manager: bun
+      working-directory: .github/fixtures/quality-basic
+      install-policy: project
+      typecheck: false
+      lint: false
+      unit: false
+      security: false
+      disabled-check-reasons: >-
+        {"typecheck": "generic L4 fixture",
+        "lint": "generic L4 fixture",
+        "unit": "generic L4 fixture",
+        "security": "generic L4 fixture"}
+      l4: true
+      l4-command: "echo 'generic l4 journey' && test -f package.json"
+
+  test-quality-l4-evidence:
+    name: "Quality Gate (L4 multi-browser + evidence upload)"
+    needs: test-quality-l4-generic
     uses: ./.github/workflows/quality.yml
     with:
       package-manager: npm
@@ -204,7 +224,7 @@ jobs:
   # ─────────────────────────────────────────────────────
   verify-quality-output:
     name: "Verify Quality Gate Output"
-    needs: [test-quality-basic, test-quality-strict-slots, test-quality-l3-evidence, test-native-python]
+    needs: [test-quality-basic, test-quality-strict-slots, test-quality-l4-generic, test-quality-l4-evidence, test-native-python]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -226,15 +246,15 @@ jobs:
             echo "::error::tested-sha of the strict slot path must match the workflow commit!"
             exit 1
           fi
-      - name: Download the L3 evidence artifact
+      - name: Download the L4 evidence artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: l3-evidence
           path: l3-evidence
-      - name: Check the L3 evidence artifact
+      - name: Check the L4 evidence artifact
         run: |
           if [ ! -f l3-evidence/report.txt ]; then
-            echo "::error::The L3 evidence artifact does not contain report.txt"
+            echo "::error::The L4 evidence artifact does not contain report.txt"
             ls -la l3-evidence
             exit 1
           fi

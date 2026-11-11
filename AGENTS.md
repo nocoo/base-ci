@@ -63,16 +63,16 @@ Package-manager/lifecycle and SSH smoke suites run in disposable GitHub runners;
 
 ## Verification
 
-6DQ = L1/L2/L3 + G2 + D1; the former G1 dimension was merged into L1 on 2026-09-21. Status is `enforced`, `planned`, `manual`, or `N/A`; gaps describe current implementation, not a weaker required bar.
+System0 quality slots (nocoo/workflow `system0-quality` skill) define what each slot means; base-ci implements them in `quality.yml` with wiring documented in [docs/slots.md](docs/slots.md). Status is `enforced`, `planned`, `manual`, or `N/A`; gaps describe current implementation, not a weaker required bar.
 
-| Dimension | Required proof | Status | Current enforcement / gap |
+| Area | Required proof | Status | Current enforcement / gap |
 |---|---|---|---|
-| L1 helpers (incl. former G1 static) | Statements, branches, functions and lines each ≥95%; no skipped/focused tests; check-only lint/types with zero errors and warnings in every helper lane | planned | Node and Python behavioral tests run in `self-test.yml` / `self-test-release.yml`; no four-metric coverage threshold exists. CI enforces actionlint/YAML/contracts, with shellcheck/pyflakes disabled and no complete helper static gate; no installed pre-commit rejection, timing or index-snapshot proof exists |
-| L2 API | Real HTTP over every owned endpoint/method | N/A | This provider exposes no application HTTP API; helper integration is exercised by reusable-workflow fixtures |
-| L3 workflows | Real install, environment, quality, scanner and SSH workflows | enforced | `self-test-quality.yml` (legacy and strict slot paths), `self-test.yml`, `self-test-ssh-deploy.yml`; actual consumer deployments require separate evidence |
-| G2 security | Dependency and secret scans; missing scanner fails | planned | `self-test-quality.yml` verifies scanners on `security-basic`; provider-wide secrets and every fixture lock are not a complete enforced gate |
-| D1 isolation | Disposable test state, guarded cleanup, no production/daily-dev writes | planned | CI uses isolated runners and `RUNNER_TEMP` markers; complete guards for locally invoked fixtures are not enforced |
-| Docs | Public input/output and adapter instructions match behavior | manual | Review README and action/workflow contracts |
+| Helper static / coverage (L1 local bar in skill) | Statements, branches, functions and lines each ≥95%; check-only lint/types | planned | Node and Python behavioral tests in `self-test.yml`; no four-metric coverage threshold on helpers; no pre-commit index gate |
+| Owned HTTP API | Real HTTP over every owned endpoint | N/A | No application HTTP API; fixtures exercise reusable workflows |
+| Workflows (L3 skill stage) | Install, quality, scanners, SSH, release proof | enforced | `self-test-quality.yml`, `self-test.yml`, `self-test-ssh-deploy.yml`, `self-test-release.yml` |
+| G1/G2 in CI | Secrets on checkout; lockfile OSV | enforced | Inlined in `quality.yml`; standalone `security.yml` for direct callers |
+| Isolation | Disposable runners, no prod writes | planned | GitHub-hosted runners; local fixture guards incomplete |
+| Docs | Inputs match behavior; skill is slot SoT | manual | `docs/slots.md` is implementation-only; skill is canonical for slot definitions |
 
 No project commit/push hooks are configured. Target pre-commit is unified L1 (types, check-only lint, coverage) on the index snapshot (<30s); pre-push is applicable integration+G2 on stdin push refs (<3min). Those local gates remain planned. Hooks must be check-only; never use `--no-verify` on commits or branch pushes.
 

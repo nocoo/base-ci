@@ -1116,9 +1116,6 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read
     outputs:
       tested-sha: ${{ steps.verify-all.outputs.tested-sha }}
     steps:

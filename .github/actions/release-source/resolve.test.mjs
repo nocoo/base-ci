@@ -48,15 +48,30 @@ function runPayload(overrides = {}) {
   };
 }
 
+function defaultQualityCheckRuns(sha = SHA) {
+  return {
+    [`/repos/${REPO}/commits/${sha}/check-runs?per_page=100`]: {
+      check_runs: [
+        {
+          name: 'quality / Z1: Gate',
+          status: 'completed',
+          conclusion: 'success',
+        },
+      ],
+    },
+  };
+}
+
 function api(handlers) {
+  const merged = { ...defaultQualityCheckRuns(), ...handlers };
   return async (url) => {
     const parsed = new URL(url);
     const key = `${parsed.pathname}${parsed.search}`;
-    if (typeof handlers[key] === 'function') {
-      return handlers[key](parsed);
+    if (typeof merged[key] === 'function') {
+      return merged[key](parsed);
     }
-    if (handlers[key]) {
-      return jsonResponse(handlers[key]);
+    if (merged[key]) {
+      return jsonResponse(merged[key]);
     }
     return jsonResponse({ message: 'Not Found' }, 404);
   };
@@ -76,6 +91,42 @@ function baseOptions(overrides = {}) {
     ...overrides,
   };
 }
+
+test('requires the default quality / Z1: Gate check-run on the proven SHA', async () => {
+  const checkUrl = `/repos/${REPO}/commits/${SHA}/check-runs?per_page=100`;
+  await assert.rejects(
+    () =>
+      resolveReleaseSource(
+        baseOptions({
+          sourceRunId: String(RUN_ID),
+          fetchImpl: api({
+            [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
+            [checkUrl]: { check_runs: [] },
+          }),
+        }),
+      ),
+    /Required check "quality \/ Z1: Gate" is missing/,
+  );
+  const ok = await resolveReleaseSource(
+    baseOptions({
+      sourceRunId: String(RUN_ID),
+      requireQualityCheck: true,
+      fetchImpl: api({
+        [`/repos/${REPO}/actions/runs/${RUN_ID}`]: runPayload(),
+        [checkUrl]: {
+          check_runs: [
+            {
+              name: 'quality / Z1: Gate',
+              status: 'completed',
+              conclusion: 'success',
+            },
+          ],
+        },
+      }),
+    }),
+  );
+  assert.equal(ok['target-sha'], SHA);
+});
 
 test('workflow_run proof accepts a GET-validated same-repo success', async () => {
   const resolved = await resolveReleaseSource(

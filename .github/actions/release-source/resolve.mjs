@@ -304,6 +304,30 @@ async function defaultBranchSha(ctx) {
   return normalizeSha(ref.object?.sha, `${ctx.branch} tip`);
 }
 
+async function assertRequiredQualityCheck(ctx, sha, checkName) {
+  const name = String(checkName ?? '').trim();
+  if (!name) {
+    throw new Error('required-quality-check is missing');
+  }
+  const url = repoUrl(
+    ctx.apiBase,
+    ctx.repository,
+    `/commits/${encodeURIComponent(sha)}/check-runs?per_page=100`,
+  );
+  const payload = await githubJson(ctx.fetchImpl, url, ctx.token);
+  const runs = Array.isArray(payload?.check_runs) ? payload.check_runs : [];
+  const match = runs.find((run) => run?.name === name);
+  if (!match) {
+    throw new Error(`Required check "${name}" is missing on ${sha}`);
+  }
+  if (match.status !== 'completed') {
+    throw new Error(`Required check "${name}" on ${sha} is not completed (status "${match.status}")`);
+  }
+  if (match.conclusion !== 'success') {
+    throw new Error(`Required check "${name}" on ${sha} conclusion is "${match.conclusion}", not success`);
+  }
+}
+
 async function packageVersionAt(ctx, sha) {
   const path = String(ctx.packageJsonPath ?? 'package.json').trim() || 'package.json';
   if (!PACKAGE_PATH_RE.test(path) || path.split('/').includes('..')) {
@@ -350,6 +374,12 @@ export async function resolveReleaseSource(options) {
 
   const requireFreshMain = parseBoolean(options.requireFreshMain, 'require-fresh-main');
   const packageVersionMatch = parseBoolean(options.packageVersionMatch, 'package-version-match');
+  const requireQualityCheckRaw = options.requireQualityCheck;
+  const requireQualityCheck =
+    requireQualityCheckRaw === undefined || requireQualityCheckRaw === null || requireQualityCheckRaw === ''
+      ? true
+      : parseBoolean(requireQualityCheckRaw, 'require-quality-check');
+  const requiredQualityCheck = String(options.requiredQualityCheck ?? 'quality / Z1: Gate').trim();
   const sourceRunIdRaw = String(options.sourceRunId ?? '').trim();
   const tag = normalizeTag(options.tag);
   const requestedSha = String(options.sourceSha ?? '').trim();
@@ -408,6 +438,10 @@ export async function resolveReleaseSource(options) {
     }
   }
 
+  if (requireQualityCheck) {
+    await assertRequiredQualityCheck(ctx, proven.targetSha, requiredQualityCheck);
+  }
+
   return output({
     targetSha: proven.targetSha,
     sourceRunId: proven.runId,
@@ -442,6 +476,8 @@ export async function runCli(env = process.env, fetchImpl = fetch) {
     requireFreshMain: env.RELEASE_REQUIRE_FRESH_MAIN,
     packageVersionMatch: env.RELEASE_PACKAGE_VERSION_MATCH,
     packageJsonPath: env.RELEASE_PACKAGE_JSON_PATH,
+    requireQualityCheck: env.RELEASE_REQUIRE_QUALITY_CHECK,
+    requiredQualityCheck: env.RELEASE_REQUIRED_QUALITY_CHECK,
     fetchImpl,
   });
   writeGitHubOutput(resolved, env.GITHUB_OUTPUT);

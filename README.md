@@ -7,7 +7,7 @@
 
 为 nocoo 项目共享 JavaScript 检查、原生测试、安全扫描和发布来源验证。消费项目保留触发条件、项目命令与部署环境，共享流程处理工具安装、检查、制品和来源校验。
 
-所有检查按 [CI 槽位（Slot）编号](docs/slots.md) 组织：`S` 静态、`G` 安全、`B` 构建、`L` 分层测试、`P` 发布物、`Z` 收口。跨仓库按编号即可比较覆盖面。`quality.yml` 把每个槽位实现为一个顶层作业，因此每个槽位只渲染一个检查名（`quality / G1: Secret Scan`），分支保护只要求完整检查名 `quality / Z1: Gate`。
+所有检查按 [System0 质量槽位](docs/slots.md) 组织（定义见 [system0-quality skill](https://github.com/nocoo/workflow/blob/main/agents/skills/system0-quality/SKILL.md)）。`quality.yml` 把每个槽位实现为一个顶层作业，因此每个槽位只渲染一个检查名（例如 `quality / G1: Secrets`），分支保护只要求完整检查名 `quality / Z1: Gate`。
 
 ## 功能
 
@@ -79,7 +79,7 @@ GitHub 自测覆盖真实依赖安装、生命周期策略、扫描器、SSH 和
 ## 文档
 
 - [完整工作流集成说明](docs/workflows.md)。
-- [CI 槽位标准](docs/slots.md)。
+- [quality.yml 槽位接线说明](docs/slots.md)（槽位定义以 System0 skill 为准）。
 - [工作流输入定义](.github/workflows/)。
 - [SSH 部署 action](.github/actions/ssh-deploy/README.md)。
 - [维护说明](AGENTS.md)。

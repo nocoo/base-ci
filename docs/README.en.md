@@ -41,7 +41,7 @@ jobs:
 
 Type, lint, unit and security checks default to enabled; optional checks require explicit activation. Commands default to the selected package manager’s project scripts, which must exist in the consumer. `coverage-path` must name a real report. See [integration](workflows.md) for inputs, native jobs and Worker/Docker examples.
 
-Every check carries a CI slot number (`S` static, `G` security, `B` build, `L` layered tests, `P` package, `Z` gate). Pass `slot-status` to declare the coverage of a repository; without it the boolean inputs keep their legacy meaning. See the [slot standard](slots.md).
+Checks follow [System0 quality slots](slots.md) (definitions in the upstream `system0-quality` skill). Pass `slot-status` for strict mode; without it the boolean inputs keep legacy meaning.
 
 ## Development
 
@@ -75,7 +75,7 @@ GitHub self-tests exercise real installation, lifecycle policies, scanners, SSH 
 ## Documentation
 
 - [Complete workflow integration guide](workflows.md).
-- [CI slot standard](slots.md).
+- [quality.yml slot wiring](slots.md) (skill is the source of truth for slot definitions).
 - [Workflow input definitions](../.github/workflows/).
 - [SSH deploy action](../.github/actions/ssh-deploy/README.md).
 - [Maintenance guide](../AGENTS.md).

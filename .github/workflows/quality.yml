@@ -1,8 +1,7 @@
 # Reusable quality workflow for JavaScript/TypeScript projects (Bun, npm, pnpm).
-# Implements the CI slot standard v1 (docs/slots.md):
-#   S1 typecheck, S2 lint, S3 workflow lint, G1 secret scan, G2 dependency vulnerabilities,
-#   B1 build, L1 unit tests + coverage, L1.5 worker runtime, L2 API E2E, L3 browser E2E,
-#   P1 package check, Z1 gate aggregate.
+# Implements the System0 quality slots (see nocoo/workflow system0-quality skill; local wiring in docs/slots.md):
+#   S1 Types, S2 Lint, S3 Workflow, G1 Secrets, G2 Dependencies, B1 Build, L1 Unit,
+#   L2 Runtime, L3 Integration, L4 E2E, P1 Package, Z1 Gate.
 #
 # Every slot is a top-level job, so each slot renders exactly one GitHub check named
 # "<ID>: <Canonical Name>" (e.g. "G1: Secret Scan"). quality.yml never calls another
@@ -97,7 +96,7 @@ on:
         default: ""
 
       l2:
-        description: "Run L2 API E2E tests"
+        description: "Deprecated alias for L3 Integration (inputs.l3-integration); enables the L3 Integration job"
         type: boolean
         default: false
       l2-command:
@@ -118,7 +117,7 @@ on:
         default: 7
 
       l3:
-        description: "Run L3 Browser E2E tests"
+        description: "Deprecated alias for L4 E2E; enables the L4 E2E job"
         type: boolean
         default: false
       l3-command:
@@ -130,9 +129,9 @@ on:
         type: string
         default: ""
       l3-browser:
-        description: "Playwright browser to install (chromium, firefox, webkit); ignored when l3-browsers is set"
+        description: "Deprecated Playwright browser for L4; leave empty for generic (non-browser) L4 commands"
         type: string
-        default: "chromium"
+        default: ""
       l3-browser-directory:
         description: "Playwright browser installation directory"
         type: string
@@ -155,7 +154,7 @@ on:
         default: 7
 
       worker:
-        description: "Run Cloudflare Worker tests"
+        description: "Deprecated alias for L2 Runtime; enables the L2 Runtime job"
         type: boolean
         default: false
       worker-command:
@@ -180,9 +179,9 @@ on:
         type: string
         default: ""
 
-      # CI slot standard v1 (docs/slots.md)
+      # System0 slot declarations (docs/slots.md implementation notes)
       slot-status:
-        description: "Slot status declaration JSON, e.g. {\"L3\": {\"status\":\"na\",\"reason\":\"no browser UI\"}}. Empty = legacy mode derived from the boolean inputs"
+        description: "Slot status declaration JSON, e.g. {\"L4\": {\"status\":\"na\",\"reason\":\"no user journeys\"}}. Empty = legacy mode derived from the boolean inputs"
         type: string
         default: ""
       workflow-lint:
@@ -269,7 +268,7 @@ jobs:
   # S1: Typecheck (independent slot job)
   # ─────────────────────────────────────────────────────
   s1-typecheck:
-    name: "S1: Typecheck"
+    name: "S1: Types"
     if: inputs.typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -306,7 +305,7 @@ jobs:
           echo "Executing prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
-      - name: "S1: Typecheck"
+      - name: "S1: Types"
         shell: bash
         working-directory: ${{ inputs.working-directory }}
         env:
@@ -419,7 +418,7 @@ jobs:
   # skipped when the slot is disabled.
   # ─────────────────────────────────────────────────────
   l1-unit-tests:
-    name: "L1: Unit Tests & Coverage"
+    name: "L1: Unit"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -489,7 +488,7 @@ jobs:
           echo "Executing prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
-      - name: "L1: Unit Tests & Coverage"
+      - name: "L1: Unit"
         id: l1-unit
         if: inputs.unit
         shell: bash
@@ -537,7 +536,7 @@ jobs:
   # S3: Workflow lint (optional)
   # ─────────────────────────────────────────────────────
   s3-workflow-lint:
-    name: "S3: Workflow Lint"
+    name: "S3: Workflow"
     if: inputs.workflow-lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -621,7 +620,7 @@ jobs:
   # G1: Secret scan
   # ─────────────────────────────────────────────────────
   g1-secret-scan:
-    name: "G1: Secret Scan"
+    name: "G1: Secrets"
     if: inputs.security
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -692,7 +691,7 @@ jobs:
   # G2: Dependency vulnerabilities
   # ─────────────────────────────────────────────────────
   g2-dependency-vulnerabilities:
-    name: "G2: Dependency Vulnerabilities"
+    name: "G2: Dependencies"
     if: inputs.security
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -831,10 +830,10 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────
-  # L2: API E2E (optional)
+  # L3: Integration (optional; l2 is a deprecated alias input)
   # ─────────────────────────────────────────────────────
-  l2-api-e2e:
-    name: "L2: API E2E"
+  l3-integration:
+    name: "L3: Integration"
     if: inputs.l2
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -872,14 +871,14 @@ jobs:
           echo "Executing prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
-      - name: "L2: API E2E"
+      - name: "L3: Integration"
         shell: bash
         working-directory: ${{ inputs.working-directory }}
         env:
           IN_CMD: ${{ inputs.l2-command != '' && inputs.l2-command || (inputs.package-manager == 'bun' && 'bun run test:api' || 'npm run test:api') }}
         run: |
           set -euo pipefail
-          echo "Running L2 API E2E: $IN_CMD"
+          echo "Running L3 Integration: $IN_CMD"
           bash -euo pipefail -c "$IN_CMD"
 
       - name: Record SHA
@@ -899,10 +898,10 @@ jobs:
           if-no-files-found: error
 
   # ─────────────────────────────────────────────────────
-  # L3: Browser E2E with Playwright (optional)
+  # L4: E2E — generic command and optional Playwright (l3 is a deprecated alias input)
   # ─────────────────────────────────────────────────────
-  l3-browser-e2e:
-    name: "L3: Browser E2E"
+  l4-e2e:
+    name: "L4: E2E"
     if: inputs.l3
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -937,7 +936,7 @@ jobs:
         env:
           IN_PREPARE: ${{ inputs.l3-prepare-command != '' && inputs.l3-prepare-command || inputs.prepare-command }}
         run: |
-          echo "Executing L3 prepare-command..."
+          echo "Executing L4 prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
       - name: Install Playwright browsers
@@ -963,14 +962,14 @@ jobs:
             npx playwright install --with-deps "${BROWSERS[@]}"
           fi
 
-      - name: "L3: Browser E2E"
+      - name: "L4: E2E"
         shell: bash
         working-directory: ${{ inputs.working-directory }}
         env:
           IN_CMD: ${{ inputs.l3-command != '' && inputs.l3-command || (inputs.package-manager == 'bun' && 'bun run test:e2e:pw' || 'npm run test:e2e:pw') }}
         run: |
           set -euo pipefail
-          echo "Running L3 browser E2E: $IN_CMD"
+          echo "Running L4 E2E: $IN_CMD"
           bash -euo pipefail -c "$IN_CMD"
 
       - name: Record SHA
@@ -980,7 +979,7 @@ jobs:
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Upload L3 evidence
+      - name: Upload L4 evidence
         if: always() && inputs.l3-artifact-name != '' && inputs.l3-artifact-path != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -990,10 +989,10 @@ jobs:
           if-no-files-found: error
 
   # ─────────────────────────────────────────────────────
-  # L1.5: Worker runtime tests (optional)
+  # L2: Runtime (optional; worker is a deprecated alias input)
   # ─────────────────────────────────────────────────────
-  l15-worker-runtime:
-    name: "L1.5: Worker Runtime Tests"
+  l2-runtime:
+    name: "L2: Runtime"
     if: inputs.worker
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1031,14 +1030,14 @@ jobs:
           echo "Executing worker-prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
-      - name: "L1.5: Worker Runtime Tests"
+      - name: "L2: Runtime"
         shell: bash
         working-directory: ${{ inputs.worker-directory }}
         env:
           IN_CMD: ${{ inputs.worker-command != '' && inputs.worker-command || (inputs.package-manager == 'bun' && 'bun run test' || 'npm run test') }}
         run: |
           set -euo pipefail
-          echo "Running worker runtime tests: $IN_CMD"
+          echo "Running L2 Runtime tests: $IN_CMD"
           bash -euo pipefail -c "$IN_CMD"
 
       - name: Record SHA
@@ -1052,7 +1051,7 @@ jobs:
   # P1: Package check (optional)
   # ─────────────────────────────────────────────────────
   p1-package-check:
-    name: "P1: Package Check"
+    name: "P1: Package"
     if: inputs.package-check
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1090,7 +1089,7 @@ jobs:
           echo "Executing prepare-command..."
           bash -euo pipefail -c "$IN_PREPARE"
 
-      - name: "P1: Package Check"
+      - name: "P1: Package"
         shell: bash
         working-directory: ${{ inputs.working-directory }}
         env:
@@ -1113,7 +1112,7 @@ jobs:
   # ─────────────────────────────────────────────────────
   z1-gate:
     name: "Z1: Gate"
-    needs: [s1-typecheck, s2-lint, s3-workflow-lint, g1-secret-scan, g2-dependency-vulnerabilities, b1-build, l1-unit-tests, l15-worker-runtime, l2-api-e2e, l3-browser-e2e, p1-package-check]
+    needs: [s1-typecheck, s2-lint, s3-workflow-lint, g1-secret-scan, g2-dependency-vulnerabilities, b1-build, l1-unit-tests, l2-runtime, l3-integration, l4-e2e, p1-package-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1152,15 +1151,16 @@ jobs:
           SLOT_L1_OUTCOME: ${{ needs.l1-unit-tests.outputs.l1-unit }}
           SLOT_L1_SHA: ${{ needs.l1-unit-tests.outputs.tested-sha }}
           SLOT_L1_JOB_RESULT: ${{ needs.l1-unit-tests.result }}
-          SLOT_L15_ENABLED: ${{ inputs.worker }}
-          SLOT_L15_OUTCOME: ${{ needs.l15-worker-runtime.result }}
-          SLOT_L15_SHA: ${{ needs.l15-worker-runtime.outputs.tested-sha }}
-          SLOT_L2_ENABLED: ${{ inputs.l2 }}
-          SLOT_L2_OUTCOME: ${{ needs.l2-api-e2e.result }}
-          SLOT_L2_SHA: ${{ needs.l2-api-e2e.outputs.tested-sha }}
-          SLOT_L3_ENABLED: ${{ inputs.l3 }}
-          SLOT_L3_OUTCOME: ${{ needs.l3-browser-e2e.result }}
-          SLOT_L3_SHA: ${{ needs.l3-browser-e2e.outputs.tested-sha }}
+          SLOT_L2_ENABLED: ${{ inputs.worker }}
+          SLOT_L2_OUTCOME: ${{ needs.l2-runtime.result }}
+          SLOT_L2_SHA: ${{ needs.l2-runtime.outputs.tested-sha }}
+          SLOT_L3_ENABLED: ${{ inputs.l2 }}
+          SLOT_L3_OUTCOME: ${{ needs.l3-integration.result }}
+          SLOT_L3_SHA: ${{ needs.l3-integration.outputs.tested-sha }}
+          SLOT_L4_ENABLED: ${{ inputs.l3 }}
+          SLOT_L4_OUTCOME: ${{ needs.l4-e2e.result }}
+          SLOT_L4_SHA: ${{ needs.l4-e2e.outputs.tested-sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           SLOT_P1_ENABLED: ${{ inputs.package-check }}
           SLOT_P1_OUTCOME: ${{ needs.p1-package-check.result }}
           SLOT_P1_SHA: ${{ needs.p1-package-check.outputs.tested-sha }}
@@ -1173,7 +1173,7 @@ jobs:
           import os
           import sys
 
-          SLOT_IDS = ["S1", "S2", "S3", "G1", "G2", "B1", "L1", "L1.5", "L2", "L3", "P1", "Z1"]
+          SLOT_IDS = ["S1", "S2", "S3", "G1", "G2", "B1", "L1", "L2", "L3", "L4", "P1", "Z1"]
           SLOT_KEYS = {
               "S1": "S1",
               "S2": "S2",
@@ -1182,12 +1182,31 @@ jobs:
               "G2": "G2",
               "B1": "B1",
               "L1": "L1",
-              "L1.5": "L15",
               "L2": "L2",
               "L3": "L3",
+              "L4": "L4",
               "P1": "P1",
           }
+          DEPRECATED_SLOT_KEYS = {
+              "L1.5": "Use L2 (Runtime) instead of L1.5; enable the worker input.",
+          }
+          SLOT_JOB_NAMES = {
+              "S1": "S1: Types",
+              "S2": "S2: Lint",
+              "S3": "S3: Workflow",
+              "G1": "G1: Secrets",
+              "G2": "G2: Dependencies",
+              "B1": "B1: Build",
+              "L1": "L1: Unit",
+              "L2": "L2: Runtime",
+              "L3": "L3: Integration",
+              "L4": "L4: E2E",
+              "P1": "P1: Package",
+              "Z1": "Z1: Gate",
+          }
           VALID_STATUSES = ("impl", "na", "todo")
+          CI_TARGET_SECONDS = 5 * 60
+          CI_LIMIT_SECONDS = 10 * 60
 
 
           def fail(message):
@@ -1244,7 +1263,10 @@ jobs:
                   fail(f"slot-status is not valid JSON: {exc}")
               if not isinstance(declarations, dict):
                   fail("slot-status must be a JSON object")
-              unknown = sorted(set(declarations) - set(SLOT_IDS))
+              for deprecated, hint in DEPRECATED_SLOT_KEYS.items():
+                  if deprecated in declarations:
+                      fail(f"slot-status uses deprecated slot {deprecated}. {hint}")
+              unknown = sorted(set(declarations) - set(SLOT_IDS) - set(DEPRECATED_SLOT_KEYS))
               if unknown:
                   fail(f"slot-status declares unknown slots: {', '.join(unknown)}")
               missing = [slot for slot in SLOT_IDS if slot not in declarations]
@@ -1285,18 +1307,159 @@ jobs:
               if not verified:
                   fail("slot-status declares no implemented slot besides Z1")
               verified.append(("L1 job", os.environ["SLOT_L1_SHA"]))
-              return verified
+              return verified, declarations
+
+
+          def fetch_run_metadata():
+              import urllib.request
+
+              token = os.environ.get("GITHUB_TOKEN", "").strip()
+              repo = os.environ.get("GITHUB_REPOSITORY", "").strip()
+              run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+              api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+              if not (token and repo and run_id):
+                  return None, {}
+              headers = {
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "nocoo-base-ci-z1-gate",
+              }
+
+              def get_json(url):
+                  request = urllib.request.Request(url, headers=headers)
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      return json.loads(response.read().decode("utf-8"))
+
+              try:
+                  run = get_json(f"{api}/repos/{repo}/actions/runs/{run_id}")
+                  jobs_payload = get_json(f"{api}/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+              except Exception as exc:
+                  print(f"Z1 summary: unable to load Actions metadata ({exc})", file=sys.stderr)
+                  return None, {}
+
+              durations = {}
+              for job in jobs_payload.get("jobs", []):
+                  name = job.get("name", "")
+                  started = job.get("started_at") or ""
+                  completed = job.get("completed_at") or ""
+                  seconds = ""
+                  if started and completed:
+                      try:
+                          from datetime import datetime
+
+                          fmt = "%Y-%m-%dT%H:%M:%SZ"
+                          delta = datetime.strptime(completed, fmt) - datetime.strptime(started, fmt)
+                          seconds = int(delta.total_seconds())
+                      except Exception:
+                          seconds = ""
+                  durations[name] = {
+                      "result": job.get("conclusion") or job.get("status") or "",
+                      "seconds": seconds,
+                  }
+              run_seconds = ""
+              if run.get("run_started_at") and run.get("updated_at"):
+                  try:
+                      from datetime import datetime
+
+                      fmt = "%Y-%m-%dT%H:%M:%SZ"
+                      delta = datetime.strptime(run["updated_at"], fmt) - datetime.strptime(run["run_started_at"], fmt)
+                      run_seconds = int(delta.total_seconds())
+                  except Exception:
+                      run_seconds = ""
+              return {
+                  "run_seconds": run_seconds,
+                  "queue_seconds": "",
+              }, durations
+
+
+          def declaration_row(slot, slots, declarations, legacy):
+              if legacy:
+                  state = slots.get(slot, {})
+                  if slot == "Z1":
+                      return "impl", "", "success"
+                  if state.get("enabled"):
+                      return "impl", "", state.get("outcome", "")
+                  return "off", "not enabled (legacy boolean inputs)", state.get("outcome", "skipped")
+              entry = declarations.get(slot, {})
+              status = entry.get("status", "")
+              reason = entry.get("reason", "") if status in ("na", "todo") else ""
+              state = slots.get(slot, {})
+              result = state.get("outcome", "")
+              if slot == "Z1":
+                  result = "success"
+              return status, reason, result
+
+
+          def format_duration(seconds):
+              if seconds == "" or seconds is None:
+                  return "—"
+              try:
+                  seconds = int(seconds)
+              except Exception:
+                  return "—"
+              minutes, secs = divmod(seconds, 60)
+              if minutes:
+                  return f"{minutes}m {secs}s"
+              return f"{secs}s"
+
+
+          def write_step_summary(mode, slots, declarations, legacy):
+              summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+              if not summary_path:
+                  return
+              run_meta, job_durations = fetch_run_metadata()
+              lines = [
+                  "## Z1 Gate — System0 quality slots",
+                  "",
+                  f"Mode: **{mode}**",
+                  "",
+                  "| Slot | Check | Status | Reason | Result | Duration |",
+                  "| --- | --- | --- | --- | --- | --- |",
+              ]
+              for slot in SLOT_IDS:
+                  status, reason, result = declaration_row(slot, slots, declarations or {}, legacy)
+                  if legacy and slot != "Z1" and status == "off":
+                      display_status = "na"
+                  else:
+                      display_status = status
+                  job_name = SLOT_JOB_NAMES.get(slot, slot)
+                  duration = "—"
+                  if job_name in job_durations:
+                      duration = format_duration(job_durations[job_name].get("seconds", ""))
+                      if not result:
+                          result = job_durations[job_name].get("result", result)
+                  reason_cell = reason.replace("|", "\\|") if reason else "—"
+                  lines.append(
+                      f"| {slot} | {job_name} | {display_status} | {reason_cell} | {result or '—'} | {duration} |"
+                  )
+              lines.append("")
+              if run_meta and run_meta.get("run_seconds") != "":
+                  total = int(run_meta["run_seconds"])
+                  target = "met" if total <= CI_TARGET_SECONDS else "above target"
+                  limit = "within limit" if total <= CI_LIMIT_SECONDS else "above 10m reference"
+                  lines.append(
+                      f"**Workflow duration:** {format_duration(total)} ({target}; {limit}; targets 5m / 10m reference)"
+                  )
+              else:
+                  lines.append("**Workflow duration:** unavailable (Actions metadata not readable)")
+              lines.append("")
+              with open(summary_path, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(lines) + "\n")
 
 
           def main():
               raw = os.environ.get("SLOT_STATUS", "")
               slots = collect_slots()
+              declarations = None
               if raw == "":
                   mode = "legacy"
                   verified = verify_legacy(slots)
+                  legacy = True
               else:
                   mode = "strict"
-                  verified = verify_strict(raw, slots)
+                  verified, declarations = verify_strict(raw, slots)
+                  legacy = False
               first_slot, first_sha = verified[0]
               for slot, sha in verified[1:]:
                   if sha != first_sha:
@@ -1306,6 +1469,7 @@ jobs:
                   state = slots[slot]
                   print(f"  {slot:5} enabled={str(state['enabled']):5} outcome={state['outcome']:10} sha={state['sha']}")
               print(f"All {len(verified)} verified slots agree on commit SHA: {first_sha}")
+              write_step_summary(mode, slots, declarations, legacy)
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
                   handle.write(f"tested-sha={first_sha}\n")
 

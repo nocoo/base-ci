@@ -14,15 +14,57 @@ const minimumReleaseSourcePin = readFileSync(
 
 const actionRefPattern = /nocoo\/base-ci\/\.github\/actions\/[a-z0-9-]+@([a-f0-9]{40})/g;
 
+function commitReachableLocally(sha) {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: root, stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function assertCommitReachable(sha) {
-  execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: root, stdio: 'pipe' });
+  if (commitReachableLocally(sha)) {
+    return;
+  }
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (token) {
+    execFileSync('gh', ['api', `repos/nocoo/base-ci/commits/${sha}`, '--silent'], {
+      cwd: root,
+      stdio: 'pipe',
+      env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token },
+    });
+    return;
+  }
+  throw new Error(
+    `pinned SHA ${sha} is not in the local object database; checkout with fetch-depth: 0 or set GITHUB_TOKEN for API verification`,
+  );
 }
 
 function releaseSourceAtPin(sha) {
-  return execFileSync('git', ['show', `${sha}:.github/actions/release-source/action.yml`], {
-    cwd: root,
-    encoding: 'utf8',
-  });
+  if (commitReachableLocally(sha)) {
+    return execFileSync('git', ['show', `${sha}:.github/actions/release-source/action.yml`], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+  }
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  if (sha === head) {
+    return readFileSync(join(root, '.github/actions/release-source/action.yml'), 'utf8');
+  }
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  assert.ok(token, 'GITHUB_TOKEN required to read release-source at a non-HEAD provider pin');
+  const encoded = execFileSync(
+    'gh',
+    [
+      'api',
+      `repos/nocoo/base-ci/contents/.github/actions/release-source/action.yml?ref=${sha}`,
+      '--jq',
+      '.content',
+    ],
+    { encoding: 'utf8', env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } },
+  ).trim();
+  return Buffer.from(encoded, 'base64').toString('utf8');
 }
 
 function collectPinnedShas() {

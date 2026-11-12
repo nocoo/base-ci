@@ -1,6 +1,13 @@
 # Changelog
 
-## v2026.14 - 2026-11-11
+## v2026.15 - 2026-11-12
+
+- **Do not use v2026.14** — its tag commit left internal composite pins pointing at unreachable SHAs (for example `e215ac8…`), which breaks `deploy-worker.yml` / `deploy-docker.yml` and provider self-tests. Repin to this release’s full tag SHA.
+- Set `.github/internal-provider-pin.txt` to a **reachable** commit on `main` that includes `release-source` `required-quality-check`; add `git cat-file` reachability checks in `internal-pin.test.mjs` and `.github/scripts/sync-provider-pin.mjs` for release maintenance.
+
+## v2026.14 - 2026-11-11 — broken
+
+**Broken release.** Internal provider pins were repointed to commit SHAs that were never pushed to `nocoo/base-ci` (amended-away objects such as `e215ac8011b63561e0b6307dbff2d22d79ae5f47`). Downstream `deploy-*` callers get GitHub 422 “No commit found”. Use **v2026.15** instead.
 
 - Repin every internal `nocoo/base-ci` composite action reference to the provider SHA recorded in `.github/internal-provider-pin.txt`; add `internal-pin.test.mjs` so CI fails on stale or mismatched pins. `deploy-worker.yml` and `deploy-docker.yml` forward `required-quality-check` / `require-quality-check` to `release-source` (default `quality / Z1: Gate`).
 - Restore canonical `quality.yml` inputs `l2-runtime`, `l3-integration`, `l4` and related `l4-*` command/artifact/browser fields removed during the workflow_call input-limit trim in v2026.13; keep `worker` / `l2` / `l3` aliases with Z1 conflict checks. Drop redundant inputs (`coverage-artifact-name`, single-browser `l3-browser`, `l3-browser-directory`, per-artifact retention-day knobs) with fixed coverage/evidence names and 7-day retention.

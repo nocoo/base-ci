@@ -53,6 +53,7 @@ actionlint -shellcheck= -pyflakes=
 node --test .github/actions/docker-manifest/index.test.mjs
 node --test .github/actions/release-source/resolve.test.mjs .github/actions/release-source/workflow-contract.test.mjs
 node --test .github/slots/quality.workflow-contract.test.mjs
+node --test .github/slots/internal-pin.test.mjs
 python3 -m unittest discover -s .github/actions/setup-js -p 'test_*.py'
 python3 -m unittest discover -s .github/actions/configure-env -p 'test_*.py'
 python3 -m unittest discover -s .github/slots -p 'test_*.py'

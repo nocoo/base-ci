@@ -205,8 +205,12 @@ test('tag-only proof GET-validates the selected run and does not take another SH
     [`/repos/${REPO}/git/tags/${SHA_C}`]: {
       object: { type: 'commit', sha: SHA },
     },
-    [`/repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=completed&per_page=100`]: {
-      workflow_runs: [runPayload({ id: OTHER_RUN, head_sha: SHA_B }), runPayload()],
+    [`/repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=100`]: {
+      workflow_runs: [
+        runPayload({ id: OTHER_RUN + 1, status: 'in_progress', conclusion: null }),
+        runPayload({ id: OTHER_RUN, head_sha: SHA_B }),
+        runPayload(),
+      ],
     },
     [`/repos/${REPO}/actions/runs/${RUN_ID}`]: () => {
       gotRun = true;

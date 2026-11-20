@@ -1,5 +1,9 @@
 # Changelog
 
+## v2026.16 - 2026-11-20
+
+- Fix `release-source` `findSuccessfulRunForSha` failing on tag-triggered releases when GitHub's `/actions/workflows/{workflow}/runs` endpoint returns `total_count: 0` for combined `head_sha` + `status=completed` queries. Drop `&status=completed` from the list query and rely on `assertTrustedRun` plus the follow-up `GET /actions/runs/{id}` proof check.
+
 ## v2026.15 - 2026-11-12
 
 - **Do not use v2026.14** — its tag commit left internal composite pins pointing at unreachable SHAs (for example `e215ac8…`), which breaks `deploy-worker.yml` / `deploy-docker.yml` and provider self-tests. Repin to this release’s full tag SHA.

@@ -233,7 +233,7 @@ async function findSuccessfulRunForSha(ctx, sha) {
   const url = repoUrl(
     ctx.apiBase,
     ctx.repository,
-    `/actions/workflows/${encodeURIComponent(fileName)}/runs?head_sha=${encodeURIComponent(sha)}&status=completed&per_page=100`,
+    `/actions/workflows/${encodeURIComponent(fileName)}/runs?head_sha=${encodeURIComponent(sha)}&per_page=100`,
   );
   const payload = await githubJson(ctx.fetchImpl, url, ctx.token);
   const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];

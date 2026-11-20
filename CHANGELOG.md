@@ -1,5 +1,12 @@
 # Changelog
 
+## v2026.17 - 2026-11-21
+
+- Fix `Self Test — ssh-deploy` failing on runners with OpenSSH ≥ 9.8 (`ubuntu-26.04`). The runner's sshd now runs with `PerSourcePenalties no` and `MaxStartups 100:30:100` (written to `/etc/ssh/sshd_config.d/99-self-test.conf`, validated with `sshd -t`, confirmed with `sshd -T`; daemons without the option fall back to exempting `127.0.0.1,::1`, then to `MaxStartups` only), plus a 20-scan probe step that fails the job when sshd stops serving. Without this, `ssh-keyscan` (six unauthenticated connections per host) accumulated `noauth` penalties and sshd refused the runner's own source address — in run 44741457393 case 5 executed and failed at `Execute remote script` with `Connection closed by 127.0.0.1 port 22` (exit 255), which skipped case 5's assertions and case 6.
+- `self-test-ssh-deploy.yml` captures the host key once in the key-pair step and passes it to cases 2–6 through `known-hosts:`; case 1 keeps exercising the action's live `ssh-keyscan` branch. All cases still run and are asserted.
+- `self-test-ssh-deploy.yml` adds a negative case 7: a deliberately wrong host key must make the deployment fail (`continue-on-error` step) and the remote script must never run.
+- `ssh-deploy` action: the private key and the host key material now live in invocation-specific temp files (`mktemp` under `$RUNNER_TEMP`) instead of fixed `~/.ssh` paths — nothing is written to `~/.ssh`, the shared `~/.ssh/known_hosts` is neither read nor written, only the provided `known-hosts` material or the live keyscan is trusted, and both files are removed in the cleanup step. Their paths are exported to `$GITHUB_ENV` right after creation, before any keyscan or validation, so the always-run cleanup can always find them, and an `ERR` trap removes them immediately if the setup step fails. The connection uses `StrictHostKeyChecking=yes` plus `ConnectTimeout=30`, and the action fails fast with `::error::` when no host key can be obtained. The action README now spells out that only a pinned `known-hosts:` keeps host identity across deployments and protects against MITM / host key changes, while the default live scan is per-deployment TOFU.
+
 ## v2026.16 - 2026-11-20
 
 - Fix `release-source` `findSuccessfulRunForSha` failing on tag-triggered releases when GitHub's `/actions/workflows/{workflow}/runs` endpoint returns `total_count: 0` for combined `head_sha` + `status=completed` queries. Drop `&status=completed` from the list query and rely on `assertTrustedRun` plus the follow-up `GET /actions/runs/{id}` proof check.

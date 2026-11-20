@@ -27,6 +27,97 @@ jobs:
           ss -tnlp | grep -q ':22' || (echo "❌ sshd not listening on :22"; exit 1)
           echo "✅ sshd up"
 
+          # OpenSSH ≥ 9.8 默认开启 PerSourcePenalties：未认证就断开的连接会被记
+          # noauth 惩罚（ssh-keyscan 扫一个 host 会开 6 条未认证连接，官方 man
+          # 明确警告 "it may penalise legitimate scanning tools such as
+          # ssh-keyscan(1)"）。惩罚累计过阈值后 sshd 直接拒绝该来源地址的后续
+          # 连接，客户端只看到 'Connection closed by 127.0.0.1 port 22' + exit 255。
+          # 自测要连着跑 6 次部署，所以这里显式关掉惩罚并抬高 MaxStartups。
+          CONF_DIR=/etc/ssh/sshd_config.d
+          CONF="$CONF_DIR/99-self-test.conf"
+          sudo mkdir -p "$CONF_DIR"
+          # sshd -t / -T 会校验 privsep 目录存在且属主为 root
+          sudo mkdir -p /run/sshd
+          sudo chmod 0755 /run/sshd
+          try_conf() {
+            printf '%s\n' "$@" | sudo tee "$CONF" >/dev/null || return 1
+            if ! sudo sshd -t; then
+              # 无效配置不能留在磁盘上：sshd 下次 reload 会直接起不来
+              sudo rm -f "$CONF"
+              return 1
+            fi
+            return 0
+          }
+          applied=0
+          applied_penalties="none"
+          if try_conf "PerSourcePenalties no" "MaxStartups 100:30:100"; then
+            applied=1
+            applied_penalties="disabled"
+            echo "✅ sshd config: PerSourcePenalties no"
+          elif try_conf "PerSourcePenaltyExemptList 127.0.0.1,::1" "MaxStartups 100:30:100"; then
+            applied=1
+            applied_penalties="exempt"
+            echo "✅ sshd config: localhost exempt from per-source penalties"
+          elif try_conf "MaxStartups 100:30:100"; then
+            applied=1
+            echo "✅ sshd config: MaxStartups only (no per-source penalty support)"
+          else
+            echo "⚠️ no valid sshd hardening config could be applied (sshd -t failed) — the probe below decides"
+          fi
+
+          # 只有拿到有效配置才 reload：拿无效配置 reload 会让 sshd 起不来
+          if [ "$applied" -eq 1 ]; then
+            sudo systemctl reload ssh || sudo systemctl restart ssh
+          else
+            echo "⚠️ sshd not reloaded (no valid hardening config applied)"
+          fi
+
+          # 校验配置真的生效（drop-in 没被 Include 时必须能看出来，而不是等 case 5 报错）
+          if ! effective=$(sudo sshd -T 2>&1); then
+            echo "❌ sshd -T failed"
+            printf '%s\n' "$effective"
+            exit 1
+          fi
+          printf '%s\n' "$effective" | grep -iE '^(persourcepenalties|maxstartups|persourcepenaltyexemptlist) ' || true
+          if [ "$applied" -eq 1 ]; then
+            # 应用了配置就必须真的生效，否则问题会被推到 case 5 才爆
+            if ! printf '%s\n' "$effective" | grep -qi '^maxstartups 100:30:100$'; then
+              echo "❌ sshd hardening is not in effect (drop-in not included?)"
+              exit 1
+            fi
+            if [ "$applied_penalties" = "disabled" ] &&
+               ! printf '%s\n' "$effective" | grep -qi '^persourcepenalties no$'; then
+              echo "❌ PerSourcePenalties is still enabled"
+              exit 1
+            fi
+            if [ "$applied_penalties" = "exempt" ] &&
+               ! printf '%s\n' "$effective" | grep -qiE '^persourcepenaltyexemptlist.*(^|[, ])127\.0\.0\.1([, ]|$)'; then
+              echo "❌ localhost is not exempt from per-source penalties"
+              exit 1
+            fi
+          else
+            echo "⚠️ sshd hardening was not applied — the probe below decides"
+          fi
+
+      - name: Verify sshd keeps serving localhost after repeated unauthenticated probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 回归探针：ssh-keyscan 每次扫描会对同一 host 开 6 条未认证连接，
+          # 未修复时第 3 次扫描左右就会被 sshd 按来源地址拒绝。
+          for i in $(seq 1 20); do
+            if ! out=$(ssh-keyscan -T 5 -p 22 127.0.0.1 2>/dev/null); then
+              echo "❌ sshd refused the host key scan on probe $i — per-source penalties are still active?"
+              echo "   check /etc/ssh/sshd_config.d/99-self-test.conf and 'sshd -T | grep -i persource'"
+              exit 1
+            fi
+            if [ -z "$out" ]; then
+              echo "❌ sshd returned no host key on probe $i"
+              exit 1
+            fi
+          done
+          echo "✅ sshd still serving 127.0.0.1 after 20 unauthenticated host key scans"
+
       - name: Generate test key pair and authorize on this runner
         id: keygen
         shell: bash
@@ -46,6 +137,27 @@ jobs:
           {
             echo "private_key<<__EOF__"
             cat "$KEYDIR/id_test"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+          # 一次性抓 host key：后续 case 通过 known-hosts: 复用，
+          # 只有 case 1 走 action 默认的现场 ssh-keyscan 分支。
+          ssh-keyscan -T 10 -p 22 -H 127.0.0.1 > "$KEYDIR/known_hosts" 2>/dev/null || true
+          if [ ! -s "$KEYDIR/known_hosts" ]; then
+            echo "❌ ssh-keyscan produced no host key for 127.0.0.1:22"
+            exit 1
+          fi
+          {
+            echo "known_hosts<<__EOF__"
+            cat "$KEYDIR/known_hosts"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+          # 另起一把不会被授权的 key，当作“错误的主机 key”给 case 7 用
+          ssh-keygen -t ed25519 -N "" -f "$KEYDIR/id_wrong" -C "ssh-deploy-self-test-wrong-host-key"
+          {
+            echo "wrong_known_hosts<<__EOF__"
+            echo "127.0.0.1 $(cat "$KEYDIR/id_wrong.pub")"
             echo "__EOF__"
           } >> "$GITHUB_OUTPUT"
 
@@ -105,6 +217,7 @@ jobs:
           user: ${{ steps.keygen.outputs.user }}
           key:  ${{ steps.keygen.outputs.private_key }}
           envs: "TEST_VAR MARKER_DIR"
+          known-hosts: ${{ steps.keygen.outputs.known_hosts }}
           script: |
             set -euo pipefail
             if [ "${TEST_VAR:-}" != "value123" ]; then
@@ -138,6 +251,7 @@ jobs:
           user: ${{ steps.keygen.outputs.user }}
           key:  ${{ steps.keygen.outputs.private_key }}
           envs: "MARKER_DIR"
+          known-hosts: ${{ steps.keygen.outputs.known_hosts }}
           script: |
             printf 'about to exit 42\n' > "$MARKER_DIR/case3-pre"
             exit 42
@@ -173,6 +287,7 @@ jobs:
           user: ${{ steps.keygen.outputs.user }}
           key:  ${{ steps.keygen.outputs.private_key }}
           envs: "MARKER_DIR"
+          known-hosts: ${{ steps.keygen.outputs.known_hosts }}
           script: |
             set -euo pipefail
             total=0
@@ -205,6 +320,7 @@ jobs:
           user: ${{ steps.keygen.outputs.user }}
           key:  ${{ steps.keygen.outputs.private_key }}
           envs: "WITH_SPACE MARKER_DIR"
+          known-hosts: ${{ steps.keygen.outputs.known_hosts }}
           script: |
             set -euo pipefail
             printf '%s' "$WITH_SPACE" > "$MARKER_DIR/case5"
@@ -234,6 +350,7 @@ jobs:
           user: ${{ steps.keygen.outputs.user }}
           key:  ${{ steps.keygen.outputs.private_key }}
           envs: "TRICKY MARKER_DIR"
+          known-hosts: ${{ steps.keygen.outputs.known_hosts }}
           script: |
             set -euo pipefail
             # printf %s 不解释转义，写出真实字节
@@ -257,6 +374,40 @@ jobs:
             exit 1
           fi
           echo "✅ Case 6: real newline + tab bytes preserved through ssh stdin pipeline"
+
+      # ── case 7: 负向用例——传入不匹配的主机 key 必须连不上 ──
+      - name: "Case 7 — mismatching host key must be rejected (expected to fail)"
+        id: case7
+        continue-on-error: true
+        uses: ./.github/actions/ssh-deploy
+        env:
+          MARKER_DIR: ${{ steps.markers.outputs.dir }}
+        with:
+          host: 127.0.0.1
+          user: ${{ steps.keygen.outputs.user }}
+          key:  ${{ steps.keygen.outputs.private_key }}
+          envs: "MARKER_DIR"
+          known-hosts: ${{ steps.keygen.outputs.wrong_known_hosts }}
+          script: |
+            set -euo pipefail
+            printf 'should never run\n' > "$MARKER_DIR/case7"
+
+      - name: "Case 7 — assert connection rejected and remote script never ran"
+        shell: bash
+        env:
+          MARKER_DIR: ${{ steps.markers.outputs.dir }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.case7.outcome }}" != "failure" ]; then
+            echo "❌ wrong host key should have failed the step, got outcome='${{ steps.case7.outcome }}'"
+            exit 1
+          fi
+          if [ -f "$MARKER_DIR/case7" ]; then
+            echo "❌ Case 7 marker exists — remote script ran despite the host key mismatch"
+            cat "$MARKER_DIR/case7"
+            exit 1
+          fi
+          echo "✅ Case 7: mismatching host key rejected, remote script never executed"
 
       - name: Summary
         if: always()

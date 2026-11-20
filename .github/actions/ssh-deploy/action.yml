@@ -28,7 +28,8 @@ inputs:
   known-hosts:
     description: |
       预置 host key 列表（多行，每行一条 ssh-keyscan 输出）。
-      留空则现场用 ssh-keyscan 抓 host key（等价 appleboy/ssh-action 默认 StrictHostKeyChecking=no 行为）。
+      留空则现场用 ssh-keyscan 抓 host key（TOFU：抓到的 key 写入 known_hosts，
+      之后的连接按 StrictHostKeyChecking=yes 校验）。
       生产场景建议预先 ssh-keyscan 后存入 GitHub secret 传入。
     required: false
     default: ""
@@ -45,21 +46,40 @@ runs:
         KNOWN_HOSTS: ${{ inputs.known-hosts }}
       run: |
         set -euo pipefail
-        mkdir -p ~/.ssh
-        chmod 700 ~/.ssh
+        workdir="${RUNNER_TEMP:-/tmp}"
+        mkdir -p "$workdir"
 
-        # 写入私钥（不打印，仅落盘）
-        printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
+        # 私钥与 host key 都落在本次调用专属的临时文件里：
+        # 不写 ~/.ssh，不复用固定路径，cleanup 时整份删掉。
+        DEPLOY_KEY_FILE=""
+        DEPLOY_KH_FILE=""
+        # 单引号：变量在 trap 触发时才展开，任何一步失败都能删掉当时已建的文件
+        trap 'rm -f "${DEPLOY_KEY_FILE:-}" "${DEPLOY_KH_FILE:-}"' EXIT
 
-        # 处理 known_hosts
+        DEPLOY_KEY_FILE=$(mktemp "$workdir/ssh_deploy_key.XXXXXX")
+        echo "DEPLOY_KEY_FILE=$DEPLOY_KEY_FILE" >> "$GITHUB_ENV"
+
+        DEPLOY_KH_FILE=$(mktemp "$workdir/ssh_deploy_known_hosts.XXXXXX")
+        echo "DEPLOY_KH_FILE=$DEPLOY_KH_FILE" >> "$GITHUB_ENV"
+
+        printf '%s\n' "$DEPLOY_KEY" > "$DEPLOY_KEY_FILE"
+        chmod 600 "$DEPLOY_KEY_FILE"
+
+        # host key 只信任本次调用提供的（或现场抓到的）材料
         if [ -n "$KNOWN_HOSTS" ]; then
-          printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          printf '%s\n' "$KNOWN_HOSTS" > "$DEPLOY_KH_FILE"
         else
-          # 没有预置 known_hosts，现场抓取（等价 StrictHostKeyChecking=no 的可控版本）
-          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          # 没有预置 known_hosts，现场抓取（TOFU：抓到的 key 就是本次唯一的信任源）
+          ssh-keyscan -T 10 -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" > "$DEPLOY_KH_FILE" 2>/dev/null || true
         fi
-        chmod 600 ~/.ssh/known_hosts
+        if ! grep -qvE '^[[:space:]]*(#|$)' "$DEPLOY_KH_FILE"; then
+          echo "::error::no host key for ${DEPLOY_HOST}:${DEPLOY_PORT} — pass known-hosts: or check that the host is reachable"
+          exit 1
+        fi
+        chmod 600 "$DEPLOY_KH_FILE"
+
+        # Setup 成功：取消 EXIT trap，临时文件留给 Execute step
+        trap - EXIT
 
     - name: Execute remote script
       shell: bash
@@ -71,6 +91,8 @@ runs:
         DEPLOY_SCRIPT: ${{ inputs.script }}
       run: |
         set -euo pipefail
+        : "${DEPLOY_KEY_FILE:?deploy key file path is missing — the Setup SSH step did not run}"
+        : "${DEPLOY_KH_FILE:?deploy known hosts file path is missing — the Setup SSH step did not run}"
 
         # 把 envs: 列出的变量序列化成 `export KEY=bash_quoted_value` 行，
         # 然后把它们和用户脚本拼在一起整体送进远端 `bash -s` 的 stdin。
@@ -92,16 +114,22 @@ runs:
         REMOTE_PAYLOAD="${EXPORTS}${DEPLOY_SCRIPT}"
 
         ssh \
-          -i ~/.ssh/deploy_key \
+          -i "$DEPLOY_KEY_FILE" \
           -p "$DEPLOY_PORT" \
           -o BatchMode=yes \
+          -o StrictHostKeyChecking=yes \
+          -o UserKnownHostsFile="$DEPLOY_KH_FILE" \
+          -o GlobalKnownHostsFile=/dev/null \
+          -o UpdateHostKeys=no \
+          -o ConnectTimeout=30 \
           -o ServerAliveInterval=30 \
           -o ServerAliveCountMax=10 \
           "${DEPLOY_USER}@${DEPLOY_HOST}" \
           'bash -s' <<< "$REMOTE_PAYLOAD"
 
-    - name: Cleanup SSH key
+    - name: Cleanup SSH key and known hosts
       if: always()
       shell: bash
       run: |
-        rm -f ~/.ssh/deploy_key
+        if [ -n "${DEPLOY_KEY_FILE:-}" ]; then rm -f "$DEPLOY_KEY_FILE"; fi
+        if [ -n "${DEPLOY_KH_FILE:-}" ]; then rm -f "$DEPLOY_KH_FILE"; fi

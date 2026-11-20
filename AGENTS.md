@@ -30,6 +30,7 @@ Package-manager/lifecycle (`self-test.yml`) and SSH (`self-test-ssh-deploy.yml`)
 - `Z1: Gate` fails on unknown slots, illegal statuses, missing reasons, enabled-but-skipped slots, conflicting alias inputs, and SHA mismatches ([docs/slots.md](docs/slots.md)).
 - Pin exact runtimes and frozen installs while preserving consumer lifecycle policy; `extra-install-dirs` are repo-root relative and must not escape via traversal or symlinks.
 - Fixture lockfiles under `.github/fixtures/` must come from real supported package managers with no workstation registry proxy.
+- SSH self-tests: when earlier cases pass but a later one fails with `Connection closed by 127.0.0.1 port 22`, check OpenSSH per-source penalties (`PerSourcePenalties`) and connection limits (`MaxStartups`) first; neutralize them (`PerSourcePenalties no`) and re-probe the daemon afterwards.
 - Map only named test credentials into CI; production credentials belong to deployment jobs and exact GitHub environments—never map `toJSON(secrets)` wholesale.
 - Release proof validates API run/tag, repo, workflow, branch, event, exact SHA, and `quality / Z1: Gate`; reject PR/fork, stale, or mismatched evidence—never fall back to latest green or `github.sha`.
 - Production concurrency never cancels active deploys; migrations and deploys run only after source proof and freshness checks.

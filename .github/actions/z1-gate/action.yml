@@ -3,10 +3,10 @@ description: "Thin checkout-free Z1 composite action: verify required/skipped jo
 
 inputs:
   needs-json:
-    description: "JSON serialization of the GitHub Actions needs context (${{ toJSON(needs) }})"
+    description: "JSON serialization of the GitHub Actions needs context (toJSON(needs))"
     required: true
   expected-sha:
-    description: "Expected 40-hex commit SHA (${{ github.sha }})"
+    description: "Expected 40-hex commit SHA (github.sha)"
     required: true
   required-jobs:
     description: "Newline- or comma-separated job IDs (optionally job_id=Display Label) that must succeed with matching tested-sha"

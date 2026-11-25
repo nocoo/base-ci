@@ -388,6 +388,9 @@ test('z1-gate action satisfies thin checkout-free Z1 composite contract', () => 
 
   assert.doesNotMatch(raw, /\bgit\b/);
   assert.doesNotMatch(raw, /actions\/checkout/);
+  for (const inputDef of Object.values(data.inputs)) {
+    assert.doesNotMatch(inputDef.description || '', /\$\{\{/);
+  }
   for (const step of data.runs.steps) {
     if (step.run) {
       assert.equal(step.shell, 'bash');

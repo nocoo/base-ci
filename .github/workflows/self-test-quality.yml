@@ -8,6 +8,7 @@ on:
 
 jobs:
   test-native-node:
+    name: "L2: Runtime (Native Node)"
     uses: ./.github/workflows/test-job.yml
     with:
       runtime: none
@@ -18,7 +19,7 @@ jobs:
   # 1. Native runner test (Python / macOS & Linux matrix support)
   # ─────────────────────────────────────────────────────
   test-native-python:
-    name: Native Python / ${{ matrix.runner }}
+    name: "L2: Runtime (Native Python / ${{ matrix.runner }})"
     strategy:
       fail-fast: false
       matrix:
@@ -42,7 +43,7 @@ jobs:
       env-json: '{"TEST_MODE": "offline", "APP_ENV": "local", "TEST_MULTILINE": "line1\nline2\nline3"}'
 
   test-package-managers:
-    name: ${{ matrix.runtime }} ${{ matrix.version }} / ${{ matrix.runner }}
+    name: "L2: Runtime (${{ matrix.runtime }} ${{ matrix.version }} / ${{ matrix.runner }})"
     strategy:
       fail-fast: false
       matrix:
@@ -221,7 +222,7 @@ jobs:
   # 4. Verify outputs of both slot paths
   # ─────────────────────────────────────────────────────
   verify-quality-output:
-    name: "Verify Quality Gate Output"
+    name: "Z1: Gate (Self-Test Output)"
     needs: [test-quality-basic, test-quality-strict-slots, test-quality-l4-generic, test-quality-l4-evidence, test-native-python]
     runs-on: ubuntu-latest
     permissions:

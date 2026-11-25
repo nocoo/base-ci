@@ -19,7 +19,7 @@
 | `workflow-lint.yml` | actionlint、YAML 与不可变引用检查 |
 | `deploy-worker.yml` | 校验 CI 来源后构建、迁移和部署 Worker |
 | `deploy-docker.yml` | 同一提交的镜像摘要、Compose 发布与健康检查 |
-| `lint-workflows` / `scan-secrets` / `scan-dependencies` | 面向自建槽位工作流的轻量 S3 / G1 / G2 composite actions |
+| `lint-workflows` / `scan-secrets` / `scan-dependencies` / `setup-playwright` / `z1-gate` | 面向自建槽位工作流的轻量 S3 / G1 / G2 / L4 / Z1 composite actions |
 
 ## 使用
 

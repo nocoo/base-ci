@@ -253,6 +253,59 @@ jobs:
           working-directory: .github/fixtures/security-basic
           lockfiles: "bun.lock,package-lock.json"
 
+  test-thin-setup-playwright:
+    name: "L4: E2E (Thin Action)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tested-sha: ${{ steps.record-sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-js
+        with:
+          package-manager: npm
+          runtime-version: '11.19.1'
+          working-directory: .github/fixtures/l3-basic
+          install-policy: blocked
+      - id: setup-pw
+        uses: ./.github/actions/setup-playwright
+        with:
+          working-directory: .github/fixtures/l3-basic
+          package-manager: npm
+          browsers: chromium
+          cache: "false"
+      - name: Verify Playwright stub invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qx -- 'install' .github/fixtures/l3-basic/playwright-install-args.txt
+          grep -qx -- '--with-deps' .github/fixtures/l3-basic/playwright-install-args.txt
+          grep -qx -- 'chromium' .github/fixtures/l3-basic/playwright-install-args.txt
+          test "${{ steps.setup-pw.outputs.playwright-version }}" = "0.0.0"
+          test "${{ steps.setup-pw.outputs.cache-hit }}" = "false"
+      - name: Record SHA
+        id: record-sha
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  test-thin-z1-gate:
+    name: "Z1: Gate (Thin Action)"
+    needs: [test-thin-setup-playwright]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/z1-gate
+        with:
+          needs-json: ${{ toJSON(needs) }}
+          expected-sha: ${{ github.sha }}
+          required-jobs: test-thin-setup-playwright
+
   # ─────────────────────────────────────────────────────
   # 4. Verify outputs of both slot paths
   # ─────────────────────────────────────────────────────

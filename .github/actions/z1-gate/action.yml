@@ -1,0 +1,214 @@
+name: "Z1 Gate"
+description: "Thin checkout-free Z1 composite action: verify required/skipped job results and matching tested-sha values"
+
+inputs:
+  needs-json:
+    description: "JSON serialization of the GitHub Actions needs context (${{ toJSON(needs) }})"
+    required: true
+  expected-sha:
+    description: "Expected 40-hex commit SHA (${{ github.sha }})"
+    required: true
+  required-jobs:
+    description: "Newline- or comma-separated job IDs (optionally job_id=Display Label) that must succeed with matching tested-sha"
+    required: true
+  skipped-jobs:
+    description: "Newline- or comma-separated job IDs (optionally job_id=Display Label) that must be skipped"
+    required: false
+    default: ""
+  no-sha-jobs:
+    description: "Newline- or comma-separated job IDs from required-jobs exempt from tested-sha verification"
+    required: false
+    default: ""
+  allow-extra-needs:
+    description: "When false, fail if needs-json contains jobs outside required-jobs and skipped-jobs"
+    required: false
+    default: "false"
+  title:
+    description: "Heading for $GITHUB_STEP_SUMMARY"
+    required: false
+    default: "Z1: Gate"
+
+outputs:
+  tested-sha:
+    description: "Verified commit SHA when the gate passes"
+    value: ${{ steps.z1-gate.outputs.tested-sha }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Verify required and skipped jobs
+      id: z1-gate
+      shell: bash
+      env:
+        IN_NEEDS_JSON: ${{ inputs.needs-json }}
+        IN_EXPECTED_SHA: ${{ inputs.expected-sha }}
+        IN_REQUIRED_JOBS: ${{ inputs.required-jobs }}
+        IN_SKIPPED_JOBS: ${{ inputs.skipped-jobs }}
+        IN_NO_SHA_JOBS: ${{ inputs.no-sha-jobs }}
+        IN_ALLOW_EXTRA_NEEDS: ${{ inputs.allow-extra-needs }}
+        IN_TITLE: ${{ inputs.title }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json
+        import os
+        import re
+        import sys
+
+
+        def fail_early(message: str) -> None:
+            print(f"::error::{message}", file=sys.stderr)
+            raise SystemExit(1)
+
+
+        def parse_job_map(raw: str, list_name: str) -> dict[str, str]:
+            mapping: dict[str, str] = {}
+            for item in re.split(r"[\n,]+", raw or ""):
+                entry = item.strip()
+                if not entry:
+                    continue
+                if "=" in entry:
+                    job_id, label = entry.split("=", 1)
+                    job_id = job_id.strip()
+                    label = label.strip() or job_id
+                else:
+                    job_id = entry
+                    label = entry
+                if not job_id:
+                    fail_early(f"Empty job ID in {list_name}: {entry!r}")
+                if job_id in mapping:
+                    fail_early(f"Duplicate job ID '{job_id}' in {list_name}")
+                mapping[job_id] = label
+            return mapping
+
+
+        def parse_job_set(raw: str) -> set[str]:
+            items: set[str] = set()
+            for item in re.split(r"[\n,]+", raw or ""):
+                entry = item.strip()
+                if not entry:
+                    continue
+                job_id = entry.split("=", 1)[0].strip()
+                if job_id:
+                    items.add(job_id)
+            return items
+
+
+        expected_sha = os.environ.get("IN_EXPECTED_SHA", "").strip()
+        if not re.fullmatch(r"[a-f0-9]{40}", expected_sha):
+            fail_early(f"expected-sha must be a 40-character lowercase hex SHA, got: {expected_sha!r}")
+
+        raw_needs = os.environ.get("IN_NEEDS_JSON", "")
+        try:
+            needs = json.loads(raw_needs)
+        except Exception as exc:
+            fail_early(f"needs-json is not valid JSON: {exc}")
+        if not isinstance(needs, dict):
+            fail_early("needs-json must be a JSON object mapping job IDs to job states")
+
+        required_jobs = parse_job_map(os.environ.get("IN_REQUIRED_JOBS", ""), "required-jobs")
+        if not required_jobs:
+            fail_early("required-jobs must specify at least one job ID")
+        skipped_jobs = parse_job_map(os.environ.get("IN_SKIPPED_JOBS", ""), "skipped-jobs")
+        overlap = sorted(set(required_jobs) & set(skipped_jobs))
+        if overlap:
+            fail_early(f"Job(s) listed in both required-jobs and skipped-jobs: {', '.join(overlap)}")
+
+        no_sha_jobs = parse_job_set(os.environ.get("IN_NO_SHA_JOBS", ""))
+        allow_extra = os.environ.get("IN_ALLOW_EXTRA_NEEDS", "false").strip() == "true"
+        title = os.environ.get("IN_TITLE", "").strip() or "Z1: Gate"
+
+        errors: list[str] = []
+        rows: list[tuple[str, str, str, str, str]] = []
+
+        for job_id, label in required_jobs.items():
+            display = f"{label} (`{job_id}`)" if label != job_id else f"`{job_id}`"
+            entry = needs.get(job_id)
+            if not isinstance(entry, dict):
+                errors.append(f"Required job '{job_id}' ({label}) is missing from needs-json")
+                rows.append((display, "required", "missing", "—", "FAIL (missing)"))
+                continue
+            result = str(entry.get("result") or "")
+            outputs = entry.get("outputs") if isinstance(entry.get("outputs"), dict) else {}
+            tested_sha = str(outputs.get("tested-sha") or "")
+            exempt = job_id in no_sha_jobs
+            sha_cell = f"`{tested_sha}`" if tested_sha else ("(exempt)" if exempt else "(missing)")
+
+            if result != "success":
+                errors.append(f"Required job '{job_id}' ({label}) finished with result '{result}', expected 'success'")
+                rows.append((display, "required", result or "(empty)", sha_cell, f"FAIL (result={result or 'empty'})"))
+            elif not exempt and tested_sha != expected_sha:
+                errors.append(
+                    f"Required job '{job_id}' ({label}) tested-sha '{tested_sha}' does not match expected-sha '{expected_sha}'"
+                )
+                rows.append((display, "required", result, sha_cell, "FAIL (sha mismatch)"))
+            else:
+                rows.append((display, "required", result, sha_cell, "PASS"))
+
+        for job_id, label in skipped_jobs.items():
+            display = f"{label} (`{job_id}`)" if label != job_id else f"`{job_id}`"
+            entry = needs.get(job_id)
+            if not isinstance(entry, dict):
+                errors.append(f"Skipped job '{job_id}' ({label}) is missing from needs-json")
+                rows.append((display, "skipped", "missing", "—", "FAIL (missing)"))
+                continue
+            result = str(entry.get("result") or "")
+            outputs = entry.get("outputs") if isinstance(entry.get("outputs"), dict) else {}
+            tested_sha = str(outputs.get("tested-sha") or "")
+            sha_cell = f"`{tested_sha}`" if tested_sha else "—"
+            if result != "skipped":
+                errors.append(f"Skipped job '{job_id}' ({label}) has result '{result}', expected 'skipped'")
+                rows.append((display, "skipped", result or "(empty)", sha_cell, f"FAIL (result={result or 'empty'})"))
+            else:
+                rows.append((display, "skipped", result, sha_cell, "PASS"))
+
+        declared_ids = set(required_jobs) | set(skipped_jobs)
+        extra_ids = [job_id for job_id in needs.keys() if job_id not in declared_ids]
+        for job_id in extra_ids:
+            entry = needs.get(job_id)
+            result = str(entry.get("result") or "") if isinstance(entry, dict) else ""
+            outputs = entry.get("outputs") if isinstance(entry, dict) and isinstance(entry.get("outputs"), dict) else {}
+            tested_sha = str(outputs.get("tested-sha") or "")
+            sha_cell = f"`{tested_sha}`" if tested_sha else "—"
+            if allow_extra:
+                rows.append((f"`{job_id}`", "extra", result or "—", sha_cell, "INFO (extra)"))
+            else:
+                errors.append(
+                    f"Undeclared job '{job_id}' present in needs-json (set allow-extra-needs: 'true' to permit)"
+                )
+                rows.append((f"`{job_id}`", "undeclared", result or "—", sha_cell, "FAIL (undeclared)"))
+
+        def esc(cell: str) -> str:
+            return cell.replace("|", "\\|")
+
+        summary_lines = [
+            f"### {title}",
+            "",
+            f"Expected SHA: `{expected_sha}`",
+            "",
+            "| Job | Requirement | Result | Tested SHA | Status |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for job_cell, req_cell, res_cell, sha_cell, status_cell in rows:
+            summary_lines.append(
+                f"| {esc(job_cell)} | {esc(req_cell)} | {esc(res_cell)} | {esc(sha_cell)} | {esc(status_cell)} |"
+            )
+        summary_lines.append("")
+        summary_text = "\n".join(summary_lines)
+        print(summary_text)
+
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as handle:
+                handle.write(summary_text)
+
+        if errors:
+            for err in errors:
+                print(f"::error::{err}", file=sys.stderr)
+            raise SystemExit(1)
+
+        github_output = os.environ.get("GITHUB_OUTPUT", "").strip()
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as handle:
+                handle.write(f"tested-sha={expected_sha}\n")
+        PY

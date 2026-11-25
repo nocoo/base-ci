@@ -1,0 +1,186 @@
+name: "Setup Playwright"
+description: "Thin L4 composite action: resolve Playwright version, cache browsers, and run single-pass browser/system dependency install"
+
+inputs:
+  working-directory:
+    description: "Working directory relative to repository root"
+    required: false
+    default: "."
+  package-manager:
+    description: "Package manager: bun, pnpm, or npm"
+    required: false
+    default: "bun"
+  browsers:
+    description: "Space-separated Playwright browser list"
+    required: false
+    default: "chromium"
+  install-deps:
+    description: "Install Linux OS shared libraries for Playwright browsers (true/false)"
+    required: false
+    default: "true"
+  cache:
+    description: "Cache downloaded Playwright browsers with actions/cache (true/false)"
+    required: false
+    default: "true"
+
+outputs:
+  playwright-version:
+    description: "Resolved Playwright version string"
+    value: ${{ steps.resolve-pw.outputs.playwright-version }}
+  cache-hit:
+    description: "Whether the Playwright browser cache hit"
+    value: ${{ steps.pw-cache.outputs.cache-hit || 'false' }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve Playwright version, binary, and browser cache path
+      id: resolve-pw
+      shell: bash
+      env:
+        IN_WORKDIR: ${{ inputs.working-directory }}
+        IN_BROWSERS: ${{ inputs.browsers }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json
+        import os
+        import pathlib
+        import re
+
+        env_cache_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+        if env_cache_path:
+            cache_path = env_cache_path
+        else:
+            cache_path = os.path.expanduser("~/.cache/ms-playwright")
+            github_env = os.environ.get("GITHUB_ENV", "").strip()
+            if github_env:
+                with open(github_env, "a", encoding="utf-8") as handle:
+                    handle.write(f"PLAYWRIGHT_BROWSERS_PATH={cache_path}\n")
+
+        workspace = pathlib.Path(os.environ.get("GITHUB_WORKSPACE") or ".").resolve()
+        raw_workdir = (os.environ.get("IN_WORKDIR") or ".").strip() or "."
+        workdir = pathlib.Path(raw_workdir)
+        if not workdir.is_absolute():
+            workdir = (workspace / workdir).resolve()
+
+        roots = [workdir] if workdir == workspace else [workdir, workspace]
+
+        def read_json(path: pathlib.Path):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return data if isinstance(data, dict) else None
+            except Exception:
+                return None
+
+        def resolve_version() -> str:
+            node_module_candidates = (
+                "node_modules/@playwright/test/package.json",
+                "node_modules/playwright/package.json",
+                "node_modules/playwright-core/package.json",
+            )
+            for root in roots:
+                for rel in node_module_candidates:
+                    pkg_path = root / rel
+                    if pkg_path.is_file():
+                        data = read_json(pkg_path)
+                        if data:
+                            ver = data.get("version")
+                            if isinstance(ver, str) and ver.strip():
+                                return ver.strip()
+
+            for root in roots:
+                pkg_path = root / "package.json"
+                if pkg_path.is_file():
+                    data = read_json(pkg_path)
+                    if data:
+                        for section in ("devDependencies", "dependencies"):
+                            deps = data.get(section)
+                            if isinstance(deps, dict):
+                                for pkg_name in ("@playwright/test", "playwright", "playwright-core"):
+                                    spec = deps.get(pkg_name)
+                                    if isinstance(spec, str) and spec.strip():
+                                        cleaned = re.sub(r"^[~^><=\s]+", "", spec.strip())
+                                        if cleaned and not cleaned.startswith(("file:", "workspace:", "link:")):
+                                            return cleaned
+            return "unknown"
+
+        def resolve_pw_bin() -> str:
+            for root in roots:
+                candidate = root / "node_modules/.bin/playwright"
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    return str(candidate)
+            return ""
+
+        raw_browsers = os.environ.get("IN_BROWSERS", "")
+        tokens = []
+        for piece in re.split(r"[\s,]+", raw_browsers.strip().lower()):
+            cleaned = re.sub(r"[^a-z0-9-]+", "-", piece).strip("-")
+            if cleaned:
+                tokens.append(cleaned)
+        browsers_key = "-".join(sorted(set(tokens))) if tokens else "none"
+
+        pw_version = resolve_version().replace("\n", "").strip()
+        pw_bin = resolve_pw_bin().replace("\n", "").strip()
+
+        github_output = os.environ.get("GITHUB_OUTPUT", "").strip()
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as handle:
+                handle.write(f"playwright-version={pw_version}\n")
+                handle.write(f"browsers-key={browsers_key}\n")
+                handle.write(f"cache-path={cache_path}\n")
+                handle.write(f"pw-bin={pw_bin}\n")
+        PY
+
+    - name: Cache Playwright browsers
+      id: pw-cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.resolve-pw.outputs.cache-path }}
+        key: ${{ runner.os }}-playwright-${{ steps.resolve-pw.outputs.playwright-version }}-${{ steps.resolve-pw.outputs.browsers-key }}
+
+    - name: Install Playwright browsers and system dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        IN_BROWSERS: ${{ inputs.browsers }}
+        PKG_MGR: ${{ inputs.package-manager }}
+        INSTALL_DEPS: ${{ inputs.install-deps }}
+        CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit || 'false' }}
+        PW_BIN: ${{ steps.resolve-pw.outputs.pw-bin }}
+        RUNNER_OS: ${{ runner.os }}
+      run: |
+        set -euo pipefail
+        read -r -a BROWSER_ARGS <<< "$(tr '\n,' '  ' <<< "$IN_BROWSERS")"
+        if [ "${#BROWSER_ARGS[@]}" -eq 0 ]; then
+          echo "::error::No Playwright browsers specified in 'browsers' input."
+          exit 1
+        fi
+
+        if [ -n "$PW_BIN" ] && [ -x "$PW_BIN" ]; then
+          CMD=("$PW_BIN")
+        elif [ "$PKG_MGR" = "bun" ]; then
+          CMD=(bunx playwright)
+        elif [ "$PKG_MGR" = "pnpm" ]; then
+          CMD=(pnpm exec playwright)
+        elif [ "$PKG_MGR" = "npm" ]; then
+          CMD=(npx playwright)
+        else
+          echo "::error::Unsupported package-manager '$PKG_MGR'. Expected bun, pnpm, or npm."
+          exit 1
+        fi
+
+        if [ "$CACHE_HIT" != "true" ]; then
+          if [ "$INSTALL_DEPS" = "true" ] && [ "$RUNNER_OS" = "Linux" ]; then
+            "${CMD[@]}" install --with-deps "${BROWSER_ARGS[@]}"
+          else
+            "${CMD[@]}" install "${BROWSER_ARGS[@]}"
+          fi
+        else
+          if [ "$INSTALL_DEPS" = "true" ] && [ "$RUNNER_OS" = "Linux" ]; then
+            "${CMD[@]}" install-deps "${BROWSER_ARGS[@]}"
+          else
+            echo "Playwright browsers restored from cache; skipping install"
+          fi
+        fi

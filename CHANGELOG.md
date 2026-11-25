@@ -1,5 +1,12 @@
 # Changelog
 
+## v2026.18 - 2026-11-26
+
+- Add thin composite actions for `L4` and `Z1` in custom/native slot workflows:
+  - `.github/actions/setup-playwright` (`L4: E2E`): resolves Playwright version from `node_modules` or `package.json`, standardizes `PLAYWRIGHT_BROWSERS_PATH` (`~/.cache/ms-playwright` when unset), caches browsers via `actions/cache@v6.1.0`, and enforces a single-pass browser/system dependency install (`install --with-deps` on cold Linux, `install-deps` on warm Linux cache hit, `install` on macOS/no-deps, skip on warm non-Linux cache hit).
+  - `.github/actions/z1-gate` (`Z1: Gate`): checkout-free composite gate verifying `needs-json` against `expected-sha`, `required-jobs`, `skipped-jobs`, `no-sha-jobs`, and `allow-extra-needs`, writing a Markdown summary table to `$GITHUB_STEP_SUMMARY` and emitting `tested-sha`.
+- Extend `.github/slots/thin-actions.test.mjs` and `.github/workflows/self-test-quality.yml` to cover `L4: E2E (Thin Action)` and `Z1: Gate (Thin Action)` alongside `S3`, `G1`, and `G2`.
+
 ## v2026.17 - 2026-11-25
 
 - Fix `Self Test — ssh-deploy` failing on runners with OpenSSH ≥ 9.8 (`ubuntu-26.04`). The runner's sshd now runs with `PerSourcePenalties no` and `MaxStartups 100:30:100` (written to `/etc/ssh/sshd_config.d/99-self-test.conf`, validated with `sshd -t`, confirmed with `sshd -T`; daemons without the option fall back to exempting `127.0.0.1,::1`, then to `MaxStartups` only), plus a 20-scan probe step that fails the job when sshd stops serving. Without this, `ssh-keyscan` (six unauthenticated connections per host) accumulated `noauth` penalties and sshd refused the runner's own source address — in run 44741457393 case 5 executed and failed at `Execute remote script` with `Connection closed by 127.0.0.1 port 22` (exit 255), which skipped case 5's assertions and case 6.

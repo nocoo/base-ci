@@ -98,7 +98,7 @@ jobs:
 
       - name: Setup JS and dependencies (if security-command requires runtime)
         if: inputs.package-manager != 'none'
-        uses: nocoo/base-ci/.github/actions/setup-js@725b7dd49aae3fc3186af36a60965449e55c0853
+        uses: nocoo/base-ci/.github/actions/setup-js@e8db8859abc44bbae2b98c74f6184503ac482243
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -108,7 +108,7 @@ jobs:
           extra-install-dirs: ${{ inputs.extra-install-dirs }}
 
       - name: Install security scanners (gitleaks + osv-scanner)
-        uses: nocoo/base-ci/.github/actions/setup-security-scanners@725b7dd49aae3fc3186af36a60965449e55c0853
+        uses: nocoo/base-ci/.github/actions/setup-security-scanners@e8db8859abc44bbae2b98c74f6184503ac482243
 
       - name: "G1: Gitleaks Secret Scan"
         if: inputs.scan-secrets

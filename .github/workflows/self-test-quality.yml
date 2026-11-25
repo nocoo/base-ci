@@ -218,6 +218,41 @@ jobs:
       scan-dependencies: true
       security-command: "echo 'custom security command ok' && true"
 
+  test-thin-lint-workflows:
+    name: "S3: Workflow (Thin Action)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/lint-workflows
+
+  test-thin-scan-secrets:
+    name: "G1: Secrets (Thin Action)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/scan-secrets
+        with:
+          working-directory: .github/fixtures/security-basic
+
+  test-thin-scan-dependencies:
+    name: "G2: Dependencies (Thin Action)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/scan-dependencies
+        with:
+          working-directory: .github/fixtures/security-basic
+          lockfiles: "bun.lock,package-lock.json"
+
   # ─────────────────────────────────────────────────────
   # 4. Verify outputs of both slot paths
   # ─────────────────────────────────────────────────────

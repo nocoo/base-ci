@@ -189,6 +189,18 @@ The shared scanner installs Gitleaks 8.30.1 and OSV Scanner 2.5.1 from versioned
 
 Inside `quality.yml` the security gate runs as two jobs: `G1: Secret Scan` (gitleaks) and `G2: Dependency Vulnerabilities` (OSV). The legacy `security: true` input still enables both. A custom `security-command` runs once, in the G1 job, and the G2 job only scans lockfiles. The split costs one extra runner job; both jobs install the scanners.
 
+### Thin composite actions (`S3`, `G1`, `G2`)
+
+Repositories with custom or native slot workflows (such as macOS or non-JS repos that cannot use `quality.yml` directly) can compose the thin Ubuntu composite actions individually, pinned to the full 40-character provider SHA:
+
+| Action | Slot | Pinned tool | Inputs |
+| --- | --- | --- | --- |
+| [lint-workflows](../.github/actions/lint-workflows/action.yml) | `S3: Workflow` | `actionlint` `1.7.12` | `files` (default `''`), `required-reusable-workflow` (default `''`) |
+| [scan-secrets](../.github/actions/scan-secrets/action.yml) | `G1: Secrets` | `gitleaks` `8.30.1` | `working-directory` (`.`), `config` (auto-detects `.gitleaks.toml`), `ignore-path` (auto-detects `.gitleaksignore`) |
+| [scan-dependencies](../.github/actions/scan-dependencies/action.yml) | `G2: Dependencies` | `osv-scanner` `2.5.1` | `lockfiles` (required, comma/newline-separated), `working-directory` (`.`), `config` (auto-detects `osv-scanner.toml`) |
+
+`lint-workflows` runs `actionlint -shellcheck= -pyflakes=` without `yamllint` or `setup-js` and verifies that every external `uses:` reference (ignoring `./...`) pins a full 40-hex commit SHA. `scan-secrets` installs only `gitleaks` and runs `gitleaks dir . --no-banner --redact --log-level error`. `scan-dependencies` installs only `osv-scanner`, checks every listed lockfile exists, and runs a single batched `osv-scanner scan`.
+
 ## Release source proof
 
 Both deployment workflows use [release-source](../.github/actions/release-source/action.yml). It validates GitHub API responses for the selected run: repository and head repository, workflow path and name, branch, event, completion, conclusion and exact SHA. List API filters are followed by a direct GET of the selected run.

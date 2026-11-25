@@ -1,0 +1,62 @@
+name: "Scan Secrets"
+description: "Thin G1 composite action: install pinned gitleaks and scan working-directory with --redact"
+
+inputs:
+  working-directory:
+    description: "Working directory relative to repo root"
+    required: false
+    default: "."
+  config:
+    description: "Path to gitleaks config file (optional; auto-detects .gitleaks.toml)"
+    required: false
+    default: ""
+  ignore-path:
+    description: "Path to gitleaks ignore file (optional; auto-detects .gitleaksignore)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install gitleaks (pinned v8.30.1)
+      shell: bash
+      run: |
+        set -euo pipefail
+        GITLEAKS_VERSION="8.30.1"
+        GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        TAR_FILE="$RUNNER_TEMP/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+
+        curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
+          -o "$TAR_FILE" \
+          "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+
+        ACTUAL_SHA256="$(sha256sum "$TAR_FILE" | awk '{print $1}')"
+        if [ "$ACTUAL_SHA256" != "$GITLEAKS_SHA256" ]; then
+          echo "::error::Gitleaks checksum mismatch! Expected: $GITLEAKS_SHA256, got: $ACTUAL_SHA256"
+          exit 1
+        fi
+
+        tar -xzf "$TAR_FILE" -C "$RUNNER_TEMP" gitleaks
+        chmod +x "$RUNNER_TEMP/gitleaks"
+        rm -f "$TAR_FILE"
+
+    - name: Run gitleaks dir scan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        IN_CONFIG: ${{ inputs.config }}
+        IN_IGNORE_PATH: ${{ inputs.ignore-path }}
+      run: |
+        set -euo pipefail
+        args=(dir . --no-banner --redact --log-level error)
+        if [ -n "$IN_CONFIG" ]; then
+          args+=("--config=$IN_CONFIG")
+        elif [ -f ".gitleaks.toml" ]; then
+          args+=("--config=.gitleaks.toml")
+        fi
+        if [ -n "$IN_IGNORE_PATH" ]; then
+          args+=("--gitleaks-ignore-path=$IN_IGNORE_PATH")
+        elif [ -f ".gitleaksignore" ]; then
+          args+=("--gitleaks-ignore-path=.gitleaksignore")
+        fi
+        "$RUNNER_TEMP/gitleaks" "${args[@]}"

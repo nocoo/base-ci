@@ -1,0 +1,79 @@
+name: "Lint Workflows"
+description: "Thin S3 composite action: run actionlint and verify full-SHA external uses pins"
+
+inputs:
+  files:
+    description: "Space-separated workflow paths; empty checks all .github/workflows/*.y*ml"
+    required: false
+    default: ""
+  required-reusable-workflow:
+    description: "Optional reusable workflow reference that must appear in selected files"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install and run actionlint
+      shell: bash
+      env:
+        WORKFLOW_FILES: ${{ inputs.files }}
+      run: |
+        set -euo pipefail
+        ACTIONLINT_VERSION="1.7.12"
+        ACTIONLINT_SHA256="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        TAR_FILE="$RUNNER_TEMP/actionlint.tar.gz"
+
+        curl --fail --silent --show-error --location --retry 3 \
+          "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+          -o "$TAR_FILE"
+        echo "${ACTIONLINT_SHA256}  ${TAR_FILE}" | sha256sum --check
+        tar -xzf "$TAR_FILE" -C "$RUNNER_TEMP" actionlint
+        rm -f "$TAR_FILE"
+
+        read -r -a files <<< "$(tr '\n' ' ' <<< "$WORKFLOW_FILES")"
+        if [ "${#files[@]}" -eq 0 ]; then
+          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
+        else
+          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= "${files[@]}"
+        fi
+
+    - name: Verify full-SHA external uses references
+      shell: bash
+      env:
+        WORKFLOW_FILES: ${{ inputs.files }}
+        REQUIRED_WORKFLOW: ${{ inputs.required-reusable-workflow }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import os, pathlib, re, yaml
+
+        raw_files = os.environ.get('WORKFLOW_FILES', '').split()
+        files = [pathlib.Path(p) for p in raw_files] if raw_files else sorted(pathlib.Path('.github/workflows').glob('*.y*ml'))
+        if not files:
+            raise SystemExit('::error::No workflow files found to lint')
+
+        references = []
+        for path in files:
+            data = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+            for job in (data.get('jobs') or {}).values():
+                if not isinstance(job, dict):
+                    continue
+                if 'uses' in job:
+                    references.append((str(path), str(job['uses'])))
+                for step in job.get('steps') or []:
+                    if isinstance(step, dict) and 'uses' in step:
+                        references.append((str(path), str(step['uses'])))
+
+        for path_str, ref in references:
+            if ref.startswith('./'):
+                continue
+            if not re.fullmatch(r'[^@]+@[a-f0-9]{40}', ref):
+                raise SystemExit(f'::error::{path_str}: external uses reference must pin a full 40-hex commit SHA: {ref}')
+
+        required = os.environ.get('REQUIRED_WORKFLOW', '').strip()
+        if required and not any(ref.startswith(required + '@') for _, ref in references):
+            raise SystemExit(f'::error::Missing required reusable workflow: {required}')
+
+        print(f'Validated {len(files)} workflow file(s) and {len(references)} uses reference(s)')
+        PY

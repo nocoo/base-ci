@@ -108,15 +108,55 @@ test('every nocoo/base-ci internal action reference matches provider pin', () =>
   assert.deepEqual(mismatches, []);
 });
 
+function assertCommitAncestor(ancestor, descendant) {
+  if (commitReachableLocally(ancestor) && commitReachableLocally(descendant)) {
+    try {
+      execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+        cwd: root,
+        stdio: 'pipe',
+      });
+      return;
+    } catch (error) {
+      const isShallow =
+        execFileSync('git', ['rev-parse', '--is-shallow-repository'], {
+          cwd: root,
+          encoding: 'utf8',
+        }).trim() === 'true';
+      if (!isShallow) {
+        assert.fail(
+          `provider pin ${descendant} is not a descendant of minimum release-source pin ${ancestor} (exit ${error.status})`,
+        );
+      }
+    }
+  }
+
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!token) {
+    throw new Error(
+      `cannot verify ancestry ${ancestor}...${descendant} without full git history or GITHUB_TOKEN`,
+    );
+  }
+  const status = execFileSync(
+    'gh',
+    ['api', `repos/nocoo/base-ci/compare/${ancestor}...${descendant}`, '--jq', '.status'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token },
+    },
+  ).trim();
+  assert.ok(
+    status === 'ahead' || status === 'identical',
+    `provider pin ${descendant} must descend from minimum release-source pin ${ancestor} (compare status: ${status})`,
+  );
+}
+
 test('provider pin is not older than minimum release-source pin', () => {
   assert.match(minimumReleaseSourcePin, /^[a-f0-9]{40}$/);
   assertCommitReachable(minimumReleaseSourcePin);
   assert.notEqual(providerPin, '2231caf82cf16f103f48cab467b3464b106d6604');
   assert.notEqual(providerPin, 'e215ac8011b63561e0b6307dbff2d22d79ae5f47');
-  assert.ok(
-    BigInt(`0x${providerPin}`) >= BigInt(`0x${minimumReleaseSourcePin}`),
-    'provider pin must be at least the minimum release-source pin',
-  );
+  assertCommitAncestor(minimumReleaseSourcePin, providerPin);
 });
 
 test('release-source pins are consistent across deploy workflows', () => {

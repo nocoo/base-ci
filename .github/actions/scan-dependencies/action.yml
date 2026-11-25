@@ -1,0 +1,76 @@
+name: "Scan Dependencies"
+description: "Thin G2 composite action: install pinned osv-scanner and run batched lockfile scan"
+
+inputs:
+  lockfiles:
+    description: "Newline- or comma-separated lockfile paths relative to working-directory"
+    required: true
+  working-directory:
+    description: "Working directory relative to repo root"
+    required: false
+    default: "."
+  config:
+    description: "Path to OSV scanner config file (optional; auto-detects osv-scanner.toml)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install osv-scanner (pinned v2.5.1)
+      shell: bash
+      run: |
+        set -euo pipefail
+        OSV_VERSION="2.5.1"
+        OSV_SHA256="f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
+        BIN_FILE="$RUNNER_TEMP/osv-scanner"
+
+        curl --retry 5 --retry-delay 2 --retry-all-errors -sSfL \
+          -o "$BIN_FILE" \
+          "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+
+        ACTUAL_SHA256="$(sha256sum "$BIN_FILE" | awk '{print $1}')"
+        if [ "$ACTUAL_SHA256" != "$OSV_SHA256" ]; then
+          echo "::error::OSV-scanner checksum mismatch! Expected: $OSV_SHA256, got: $ACTUAL_SHA256"
+          exit 1
+        fi
+
+        chmod +x "$BIN_FILE"
+
+    - name: Run batched OSV lockfile scan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        IN_LOCKFILES: ${{ inputs.lockfiles }}
+        IN_CONFIG: ${{ inputs.config }}
+      run: |
+        set -euo pipefail
+        LOCKFILES=()
+        while IFS= read -r line || [ -n "$line" ]; do
+          trimmed="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -n "$trimmed" ]; then
+            LOCKFILES+=("$trimmed")
+          fi
+        done < <(printf '%s\n' "$IN_LOCKFILES" | tr ',' '\n')
+
+        if [ "${#LOCKFILES[@]}" -eq 0 ]; then
+          echo "::error::No lockfiles specified for OSV scan."
+          exit 1
+        fi
+
+        args=(scan)
+        if [ -n "$IN_CONFIG" ]; then
+          args+=("--config=$IN_CONFIG")
+        elif [ -f "osv-scanner.toml" ]; then
+          args+=("--config=osv-scanner.toml")
+        fi
+
+        for lf in "${LOCKFILES[@]}"; do
+          if [ ! -f "$lf" ]; then
+            echo "::error::Lockfile '$lf' does not exist."
+            exit 1
+          fi
+          args+=("--lockfile=$lf")
+        done
+
+        "$RUNNER_TEMP/osv-scanner" "${args[@]}"

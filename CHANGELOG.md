@@ -1,5 +1,18 @@
 # Changelog
 
+## v2026.20 - 2026-11-26
+
+- Upgrade `.github/actions/setup-playwright` to skip redundant `apt-get install-deps` on Linux runners when shared libraries are already satisfied:
+  - Change `inputs.install-deps` default from `"true"` to `"auto"` (`auto` / `true` / `force` / `false`; invalid values fail loudly with `::error::`).
+  - Under `auto` (and `true`, treated identically so existing callers immediately benefit), download browsers without `--with-deps` on cache miss, inspect executable browser binaries under `$CACHE_PATH` (`chrome`, `chrome-headless-shell`, `headless_shell`, `firefox`, `MiniBrowser`) with `ldd`, and skip `playwright install-deps` when `ldd` reports zero `not found` libraries. Fall back safely to `install-deps` when any shared library is missing or when no browser binaries are found.
+  - Keep `force` for unconditional single-pass `install --with-deps` / `install-deps` and `false` to never install Linux OS dependencies.
+- Expand `.github/slots/thin-actions.test.mjs` to cover `auto`, `true`, `force`, `false`, clean/missing `ldd`, missing-binary fallback, macOS, and invalid `install-deps` values deterministically via fake `LDD_BIN` + `$CACHE_PATH`.
+- Extend `L4: E2E (Thin Action)` in `.github/workflows/self-test-quality.yml` to verify both `install-deps: "force"` and real Ubuntu `ldd` clean skip under `install-deps: "auto"`.
+
+## v2026.19 - 2026-11-26
+
+- Read `CLOUDFLARE_ACCOUNT_ID` from GitHub environment variables (`vars.CLOUDFLARE_ACCOUNT_ID`) instead of secrets in `.github/workflows/deploy-worker.yml`, and expose `DEPLOY_PHASE`, `DEPLOY_URL`, and `DEPLOY_ORIGIN_MARKER` from environment variables (`vars.DEPLOY_*`) in `.github/workflows/deploy-docker.yml`'s `Verify deployed service` step (`98fc0234`).
+
 ## v2026.18 - 2026-11-26
 
 - Add thin composite actions for `L4` and `Z1` in custom/native slot workflows:

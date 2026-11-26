@@ -19,7 +19,7 @@
 | `workflow-lint.yml` | actionlint、YAML 与不可变引用检查 |
 | `deploy-worker.yml` | 校验 CI 来源后构建、迁移和部署 Worker |
 | `deploy-docker.yml` | 同一提交的镜像摘要、Compose 发布与健康检查 |
-| `lint-workflows` / `scan-secrets` / `scan-dependencies` / `setup-playwright` / `z1-gate` | 面向自建槽位工作流的轻量 S3 / G1 / G2 / L4 / Z1 composite actions |
+| `lint-workflows` / `scan-secrets` / `scan-dependencies` / `setup-playwright` / `z1-gate` | 面向自建槽位工作流的轻量 S3 / G1 / G2 / L4（Linux `ldd` 自检按需跳过 `apt-get install-deps`）/ Z1 composite actions |
 
 ## 使用
 
@@ -61,8 +61,11 @@ actionlint -shellcheck= -pyflakes=
 node --test .github/actions/docker-manifest/index.test.mjs
 node --test .github/actions/release-source/resolve.test.mjs .github/actions/release-source/workflow-contract.test.mjs
 node --test .github/slots/quality.workflow-contract.test.mjs
+node --test .github/slots/thin-actions.test.mjs
+node --test .github/slots/internal-pin.test.mjs
 python3 -m unittest discover -s .github/actions/setup-js -p 'test_*.py'
 python3 -m unittest discover -s .github/actions/configure-env -p 'test_*.py'
+python3 -m unittest discover -s .github/actions/resolve-locked-wrangler -p 'test_*.py'
 python3 -m unittest discover -s .github/slots -p 'test_*.py'
 ```
 

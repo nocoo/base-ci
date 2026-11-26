@@ -15,9 +15,9 @@ inputs:
     required: false
     default: "chromium"
   install-deps:
-    description: "Install Linux OS shared libraries for Playwright browsers (true/false)"
+    description: "Linux OS shared-library policy: auto (default; skip apt-get when ldd confirms browser libs exist; true is treated as auto), force (always run install-deps), or false (never)"
     required: false
-    default: "true"
+    default: "auto"
   cache:
     description: "Cache downloaded Playwright browsers with actions/cache (true/false)"
     required: false
@@ -148,6 +148,7 @@ runs:
         PKG_MGR: ${{ inputs.package-manager }}
         INSTALL_DEPS: ${{ inputs.install-deps }}
         CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit || 'false' }}
+        CACHE_PATH: ${{ steps.resolve-pw.outputs.cache-path }}
         PW_BIN: ${{ steps.resolve-pw.outputs.pw-bin }}
         RUNNER_OS: ${{ runner.os }}
       run: |
@@ -157,6 +158,14 @@ runs:
           echo "::error::No Playwright browsers specified in 'browsers' input."
           exit 1
         fi
+
+        case "$INSTALL_DEPS" in
+          auto|true|force|false) ;;
+          *)
+            echo "::error::Unsupported install-deps '$INSTALL_DEPS'. Expected auto, true, force, or false."
+            exit 1
+            ;;
+        esac
 
         if [ -n "$PW_BIN" ] && [ -x "$PW_BIN" ]; then
           CMD=("$PW_BIN")
@@ -171,16 +180,63 @@ runs:
           exit 1
         fi
 
-        if [ "$CACHE_HIT" != "true" ]; then
-          if [ "$INSTALL_DEPS" = "true" ] && [ "$RUNNER_OS" = "Linux" ]; then
-            "${CMD[@]}" install --with-deps "${BROWSER_ARGS[@]}"
-          else
+        if [ "$RUNNER_OS" != "Linux" ]; then
+          if [ "$CACHE_HIT" != "true" ]; then
             "${CMD[@]}" install "${BROWSER_ARGS[@]}"
-          fi
-        else
-          if [ "$INSTALL_DEPS" = "true" ] && [ "$RUNNER_OS" = "Linux" ]; then
-            "${CMD[@]}" install-deps "${BROWSER_ARGS[@]}"
           else
             echo "Playwright browsers restored from cache; skipping install"
           fi
+          exit 0
         fi
+
+        case "$INSTALL_DEPS" in
+          force)
+            if [ "$CACHE_HIT" != "true" ]; then
+              "${CMD[@]}" install --with-deps "${BROWSER_ARGS[@]}"
+            else
+              "${CMD[@]}" install-deps "${BROWSER_ARGS[@]}"
+            fi
+            ;;
+          false)
+            if [ "$CACHE_HIT" != "true" ]; then
+              "${CMD[@]}" install "${BROWSER_ARGS[@]}"
+            else
+              echo "Playwright browsers restored from cache; skipping install"
+            fi
+            ;;
+          auto|true)
+            if [ "$CACHE_HIT" != "true" ]; then
+              "${CMD[@]}" install "${BROWSER_ARGS[@]}"
+            fi
+
+            LDD_CMD="${LDD_BIN:-ldd}"
+            CACHE_DIR="${CACHE_PATH-}"
+            FOUND_BINS=0
+            MISSING_LIBS=0
+
+            if [ -n "$CACHE_DIR" ] && [ -d "$CACHE_DIR" ] && command -v "$LDD_CMD" >/dev/null 2>&1; then
+              while IFS= read -r -d '' bin; do
+                [ -x "$bin" ] || continue
+                FOUND_BINS=$((FOUND_BINS + 1))
+                LDD_OUT="$("$LDD_CMD" "$bin" 2>&1 || true)"
+                if grep -q "not found" <<< "$LDD_OUT"; then
+                  MISSING_LIBS=1
+                  echo "Missing shared libraries for $bin:"
+                  grep "not found" <<< "$LDD_OUT" || true
+                fi
+              done < <(find "$CACHE_DIR" -maxdepth 5 -type f \( -name 'chrome' -o -name 'chrome-headless-shell' -o -name 'headless_shell' -o -name 'firefox' -o -name 'MiniBrowser' \) -print0)
+            fi
+
+            if [ "$FOUND_BINS" -gt 0 ]; then
+              if [ "$MISSING_LIBS" -eq 0 ]; then
+                echo "Playwright browser shared libraries satisfied on runner (ldd clean across $FOUND_BINS binary/binaries); skipping apt-get install-deps"
+              else
+                echo "Missing Playwright shared libraries detected via ldd; running install-deps"
+                "${CMD[@]}" install-deps "${BROWSER_ARGS[@]}"
+              fi
+            else
+              echo "No Playwright browser binaries found under '${CACHE_DIR}' (or '${LDD_CMD}' unavailable); falling back to install-deps"
+              "${CMD[@]}" install-deps "${BROWSER_ARGS[@]}"
+            fi
+            ;;
+        esac

@@ -269,22 +269,51 @@ jobs:
           runtime-version: '11.19.1'
           working-directory: .github/fixtures/l3-basic
           install-policy: blocked
-      - id: setup-pw
+      - id: setup-pw-force
         uses: ./.github/actions/setup-playwright
         with:
           working-directory: .github/fixtures/l3-basic
           package-manager: npm
           browsers: chromium
+          install-deps: "force"
           cache: "false"
-      - name: Verify Playwright stub invocation
+      - name: Verify Playwright stub invocation (force)
         shell: bash
         run: |
           set -euo pipefail
           grep -qx -- 'install' .github/fixtures/l3-basic/playwright-install-args.txt
           grep -qx -- '--with-deps' .github/fixtures/l3-basic/playwright-install-args.txt
           grep -qx -- 'chromium' .github/fixtures/l3-basic/playwright-install-args.txt
-          test "${{ steps.setup-pw.outputs.playwright-version }}" = "0.0.0"
-          test "${{ steps.setup-pw.outputs.cache-hit }}" = "false"
+          test "${{ steps.setup-pw-force.outputs.playwright-version }}" = "0.0.0"
+          test "${{ steps.setup-pw-force.outputs.cache-hit }}" = "false"
+      - name: Prepare clean ELF browser stub for ldd auto verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/fixtures/l3-basic/playwright-install-args.txt
+          PW_AUTO_DIR="$RUNNER_TEMP/pw-auto-ldd"
+          mkdir -p "$PW_AUTO_DIR/chromium-0000/chrome-linux"
+          cp /usr/bin/true "$PW_AUTO_DIR/chromium-0000/chrome-linux/chrome"
+          chmod +x "$PW_AUTO_DIR/chromium-0000/chrome-linux/chrome"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PW_AUTO_DIR" >> "$GITHUB_ENV"
+      - id: setup-pw-auto
+        uses: ./.github/actions/setup-playwright
+        with:
+          working-directory: .github/fixtures/l3-basic
+          package-manager: npm
+          browsers: chromium
+          install-deps: "auto"
+          cache: "false"
+      - name: Verify Playwright auto mode skipped install-deps on clean ldd
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qx -- 'install' .github/fixtures/l3-basic/playwright-install-args.txt
+          grep -qx -- 'chromium' .github/fixtures/l3-basic/playwright-install-args.txt
+          ! grep -qx -- '--with-deps' .github/fixtures/l3-basic/playwright-install-args.txt
+          ! grep -qx -- 'install-deps' .github/fixtures/l3-basic/playwright-install-args.txt
+          test "${{ steps.setup-pw-auto.outputs.playwright-version }}" = "0.0.0"
+          test "${{ steps.setup-pw-auto.outputs.cache-hit }}" = "false"
       - name: Record SHA
         id: record-sha
         shell: bash

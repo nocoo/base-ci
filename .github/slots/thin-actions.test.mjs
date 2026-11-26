@@ -197,7 +197,7 @@ test('setup-playwright action satisfies thin L4 composite contract', () => {
   assert.equal(data.inputs['working-directory'].default, '.');
   assert.equal(data.inputs['package-manager'].default, 'bun');
   assert.equal(data.inputs.browsers.default, 'chromium');
-  assert.equal(data.inputs['install-deps'].default, 'true');
+  assert.equal(data.inputs['install-deps'].default, 'auto');
   assert.equal(data.inputs.cache.default, 'true');
   assert.deepEqual(Object.keys(data.outputs), ['playwright-version', 'cache-hit']);
 
@@ -210,6 +210,7 @@ test('setup-playwright action satisfies thin L4 composite contract', () => {
 
   const installStep = data.runs.steps[data.runs.steps.length - 1];
   assert.equal(installStep['working-directory'], '${{ inputs.working-directory }}');
+  assert.equal(installStep.env.CACHE_PATH, '${{ steps.resolve-pw.outputs.cache-path }}');
   for (const step of data.runs.steps) {
     if (step.run) {
       assert.equal(step.shell, 'bash');
@@ -304,7 +305,7 @@ test('setup-playwright resolve-pw resolves version, pw-bin, browsers-key, and PL
   }
 });
 
-test('setup-playwright install step uses single-pass install rules without double-installing deps', () => {
+test('setup-playwright install step uses ldd-aware auto policy and single-pass install rules', () => {
   const { data } = loadYaml('.github/actions/setup-playwright/action.yml');
   const installStep = data.runs.steps[data.runs.steps.length - 1];
   const dir = mkdtempSync(join(tmpdir(), 'setup-pw-install-'));
@@ -315,9 +316,45 @@ test('setup-playwright install step uses single-pass install rules without doubl
     const pwBin = join(binDir, 'playwright');
     writeFileSync(
       pwBin,
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${logFile}"\n`,
+      [
+        '#!/usr/bin/env bash',
+        `printf '%s\\n' "$*" >> "${logFile}"`,
+        'if [ "${1:-}" = "install" ] && [ "${FAKE_PW_CREATE_BIN:-0}" = "1" ] && [ -n "${CACHE_PATH:-}" ]; then',
+        '  mkdir -p "$CACHE_PATH/chromium-1234/chrome-linux"',
+        '  printf "#!/usr/bin/env bash\\nexit 0\\n" > "$CACHE_PATH/chromium-1234/chrome-linux/chrome"',
+        '  chmod +x "$CACHE_PATH/chromium-1234/chrome-linux/chrome"',
+        'fi',
+      ].join('\n') + '\n',
     );
     chmodSync(pwBin, 0o755);
+
+    const lddClean = join(dir, 'ldd-clean');
+    writeFileSync(
+      lddClean,
+      '#!/usr/bin/env bash\necho "linux-vdso.so.1 (0x00007fff)"\necho "libgbm.so.1 => /lib/x86_64-linux-gnu/libgbm.so.1 (0x00007f00)"\n',
+    );
+    chmodSync(lddClean, 0o755);
+
+    const lddMissing = join(dir, 'ldd-missing');
+    writeFileSync(
+      lddMissing,
+      '#!/usr/bin/env bash\necho "linux-vdso.so.1 (0x00007fff)"\necho "libgbm.so.1 => not found"\n',
+    );
+    chmodSync(lddMissing, 0o755);
+
+    const makeCacheDir = (name, withBinary) => {
+      const cacheDir = join(dir, name);
+      rmSync(cacheDir, { recursive: true, force: true });
+      mkdirSync(cacheDir, { recursive: true });
+      if (withBinary) {
+        const chromeDir = join(cacheDir, 'chromium-1234/chrome-linux');
+        mkdirSync(chromeDir, { recursive: true });
+        const chromeBin = join(chromeDir, 'chrome');
+        writeFileSync(chromeBin, '#!/usr/bin/env bash\nexit 0\n');
+        chmodSync(chromeBin, 0o755);
+      }
+      return cacheDir;
+    };
 
     const runInstall = (overrides) => {
       writeFileSync(logFile, '');
@@ -325,12 +362,15 @@ test('setup-playwright install step uses single-pass install rules without doubl
         cwd: dir,
         env: {
           ...process.env,
-          IN_BROWSERS: 'chromium webkit',
+          IN_BROWSERS: 'chromium',
           PKG_MGR: 'bun',
-          INSTALL_DEPS: 'true',
+          INSTALL_DEPS: 'auto',
           CACHE_HIT: 'false',
+          CACHE_PATH: makeCacheDir('default-cache', false),
           PW_BIN: pwBin,
           RUNNER_OS: 'Linux',
+          LDD_BIN: lddClean,
+          FAKE_PW_CREATE_BIN: '1',
           ...overrides,
         },
         encoding: 'utf8',
@@ -339,27 +379,127 @@ test('setup-playwright install step uses single-pass install rules without doubl
       return { stdout, lines };
     };
 
-    // Cold cache on Linux + install-deps=true -> single `install --with-deps`
-    const coldLinux = runInstall({ CACHE_HIT: 'false', INSTALL_DEPS: 'true', RUNNER_OS: 'Linux' });
-    assert.deepEqual(coldLinux.lines, ['install --with-deps chromium webkit']);
+    for (const mode of ['auto', 'true']) {
+      // Cold cache + ldd clean -> ONLY `install chromium` (no --with-deps, no install-deps)
+      const coldClean = runInstall({
+        INSTALL_DEPS: mode,
+        CACHE_HIT: 'false',
+        CACHE_PATH: makeCacheDir(`cold-clean-${mode}`, false),
+        LDD_BIN: lddClean,
+        FAKE_PW_CREATE_BIN: '1',
+      });
+      assert.deepEqual(coldClean.lines, ['install chromium']);
+      assert.match(coldClean.stdout, /ldd clean across 1 binary\/binaries.*skipping apt-get install-deps/);
 
-    // Cache hit on Linux + install-deps=true -> single `install-deps`
-    const warmLinux = runInstall({ CACHE_HIT: 'true', INSTALL_DEPS: 'true', RUNNER_OS: 'Linux' });
-    assert.deepEqual(warmLinux.lines, ['install-deps chromium webkit']);
+      // Warm cache + ldd clean -> ZERO playwright commands
+      const warmClean = runInstall({
+        INSTALL_DEPS: mode,
+        CACHE_HIT: 'true',
+        CACHE_PATH: makeCacheDir(`warm-clean-${mode}`, true),
+        LDD_BIN: lddClean,
+      });
+      assert.deepEqual(warmClean.lines, []);
+      assert.match(warmClean.stdout, /ldd clean across 1 binary\/binaries.*skipping apt-get install-deps/);
 
-    // Cache hit on macOS -> skip completely
-    const warmMac = runInstall({ CACHE_HIT: 'true', INSTALL_DEPS: 'true', RUNNER_OS: 'macOS' });
+      // Warm cache + ldd missing lib -> ONLY `install-deps chromium`
+      const warmMissing = runInstall({
+        INSTALL_DEPS: mode,
+        CACHE_HIT: 'true',
+        CACHE_PATH: makeCacheDir(`warm-missing-${mode}`, true),
+        LDD_BIN: lddMissing,
+      });
+      assert.deepEqual(warmMissing.lines, ['install-deps chromium']);
+      assert.match(warmMissing.stdout, /Missing Playwright shared libraries detected via ldd/);
+
+      // Cold cache + ldd missing lib -> `install chromium` then `install-deps chromium`
+      const coldMissing = runInstall({
+        INSTALL_DEPS: mode,
+        CACHE_HIT: 'false',
+        CACHE_PATH: makeCacheDir(`cold-missing-${mode}`, false),
+        LDD_BIN: lddMissing,
+        FAKE_PW_CREATE_BIN: '1',
+      });
+      assert.deepEqual(coldMissing.lines, ['install chromium', 'install-deps chromium']);
+      assert.match(coldMissing.stdout, /Missing Playwright shared libraries detected via ldd/);
+
+      // No browser binaries found -> falls back safely to `install-deps`
+      const warmEmpty = runInstall({
+        INSTALL_DEPS: mode,
+        CACHE_HIT: 'true',
+        CACHE_PATH: makeCacheDir(`warm-empty-${mode}`, false),
+        LDD_BIN: lddClean,
+      });
+      assert.deepEqual(warmEmpty.lines, ['install-deps chromium']);
+
+      const coldEmpty = runInstall({
+        INSTALL_DEPS: mode,
+        CACHE_HIT: 'false',
+        CACHE_PATH: makeCacheDir(`cold-empty-${mode}`, false),
+        LDD_BIN: lddClean,
+        FAKE_PW_CREATE_BIN: '0',
+      });
+      assert.deepEqual(coldEmpty.lines, ['install chromium', 'install-deps chromium']);
+    }
+
+    // force + cold cache -> single `install --with-deps`
+    const forceCold = runInstall({
+      IN_BROWSERS: 'chromium webkit',
+      INSTALL_DEPS: 'force',
+      CACHE_HIT: 'false',
+      RUNNER_OS: 'Linux',
+    });
+    assert.deepEqual(forceCold.lines, ['install --with-deps chromium webkit']);
+
+    // force + warm cache -> single `install-deps`
+    const forceWarm = runInstall({
+      IN_BROWSERS: 'chromium webkit',
+      INSTALL_DEPS: 'force',
+      CACHE_HIT: 'true',
+      RUNNER_OS: 'Linux',
+    });
+    assert.deepEqual(forceWarm.lines, ['install-deps chromium webkit']);
+
+    // false + cold cache -> `install` without `--with-deps`
+    const falseCold = runInstall({
+      IN_BROWSERS: 'chromium webkit',
+      INSTALL_DEPS: 'false',
+      CACHE_HIT: 'false',
+      RUNNER_OS: 'Linux',
+    });
+    assert.deepEqual(falseCold.lines, ['install chromium webkit']);
+
+    // false + warm cache -> skip completely
+    const falseWarm = runInstall({
+      INSTALL_DEPS: 'false',
+      CACHE_HIT: 'true',
+      RUNNER_OS: 'Linux',
+    });
+    assert.deepEqual(falseWarm.lines, []);
+    assert.match(falseWarm.stdout, /skipping install/);
+
+    // macOS -> cache miss installs without deps, cache hit skips
+    const coldMac = runInstall({ CACHE_HIT: 'false', INSTALL_DEPS: 'force', RUNNER_OS: 'macOS' });
+    assert.deepEqual(coldMac.lines, ['install chromium']);
+    const warmMac = runInstall({ CACHE_HIT: 'true', INSTALL_DEPS: 'auto', RUNNER_OS: 'macOS' });
     assert.deepEqual(warmMac.lines, []);
     assert.match(warmMac.stdout, /skipping install/);
 
-    // Cold cache + install-deps=false -> `install` without `--with-deps`
-    const noDeps = runInstall({ CACHE_HIT: 'false', INSTALL_DEPS: 'false', RUNNER_OS: 'Linux' });
-    assert.deepEqual(noDeps.lines, ['install chromium webkit']);
+    // Invalid install-deps fails loudly
+    assert.throws(
+      () => runInstall({ INSTALL_DEPS: 'always' }),
+      (err) => {
+        assert.match(`${err.stdout || ''}${err.stderr || ''}`, /::error::Unsupported install-deps 'always'/);
+        return true;
+      },
+    );
 
     // Empty browsers fails loudly
     assert.throws(
       () => runInstall({ IN_BROWSERS: '   ' }),
-      /No Playwright browsers specified/,
+      (err) => {
+        assert.match(`${err.stdout || ''}${err.stderr || ''}`, /::error::No Playwright browsers specified/);
+        return true;
+      },
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

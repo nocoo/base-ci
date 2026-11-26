@@ -23,7 +23,8 @@ test('deploy-worker pins a full release-source SHA, not a relative composite pat
 
 test('deploy-worker public secrets, lock and environment stay on the called job', () => {
   assert.match(workflow, /CLOUDFLARE_API_TOKEN:/);
-  assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID:/);
+  assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ vars\.CLOUDFLARE_ACCOUNT_ID \}\}/);
+  assert.doesNotMatch(workflow, /secrets\.CLOUDFLARE_ACCOUNT_ID/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /environment:\n\s+name: \$\{\{ inputs\.environment \}\}/);
   assert.doesNotMatch(workflow, /secrets: inherit/);

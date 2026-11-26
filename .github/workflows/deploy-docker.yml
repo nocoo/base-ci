@@ -311,6 +311,9 @@ jobs:
           SOURCE_SHA: ${{ needs.source.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
           VERIFY_COMMAND: ${{ inputs.verify-command }}
+          DEPLOY_PHASE: ${{ vars.DEPLOY_PHASE }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          DEPLOY_ORIGIN_MARKER: ${{ vars.DEPLOY_ORIGIN_MARKER }}
         run: bash -euo pipefail -c "$VERIFY_COMMAND"
       - name: Record release evidence
         env:

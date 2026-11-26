@@ -276,7 +276,7 @@ For cf, `d1-databases` accepts database UUIDs, not names or bindings, and migrat
 
 `deploy-script` invokes an existing complete project release command instead of the shared deploy command. With shared `d1-migrations: false` (the default), neither CLI version nor binary is required or checked; the script owns its toolchain. With shared migrations enabled, the selected CLI and its exact version are still required for migrations, followed by the project script. A deployment holds a non-cancelling lock for its production environment.
 
-GitHub environment names are exact and case-sensitive. The called deployment job selects the environment and reads its `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. CI jobs do not need production deployment credentials.
+GitHub environment names are exact and case-sensitive. The called deployment job selects the environment and reads `CLOUDFLARE_API_TOKEN` from environment secrets and `CLOUDFLARE_ACCOUNT_ID` from environment variables (`vars.CLOUDFLARE_ACCOUNT_ID`). CI jobs do not need production deployment credentials.
 
 This workflow rebuilds the proven source. Projects promoting already tested artifacts keep their artifact identity/digest validation in a small adapter using the shared source and setup actions. A warning-only artifact download is not a replacement for that validation.
 
@@ -294,7 +294,7 @@ with:
   verify-command: ./scripts/verify-production.sh
 ```
 
-The caller needs `contents: read`, `actions: read` and `packages: write`. Credentials are `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, optional `VPS_PORT`/`VPS_KNOWN_HOSTS`, and `GHCR_PULL_USER`/`GHCR_PULL_TOKEN`. `BUILD_ARGS` carries additional caller build arguments.
+The caller needs `contents: read`, `actions: read` and `packages: write`. Credentials are `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, optional `VPS_PORT`/`VPS_KNOWN_HOSTS`, and `GHCR_PULL_USER`/`GHCR_PULL_TOKEN`. `BUILD_ARGS` carries additional caller build arguments. The `Verify deployed service` step exposes environment variables `DEPLOY_PHASE`, `DEPLOY_URL`, and `DEPLOY_ORIGIN_MARKER` (`vars.DEPLOY_*`) from the selected deployment environment.
 
 ### Tailscale before SSH (optional)
 

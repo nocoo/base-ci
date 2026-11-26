@@ -57,7 +57,7 @@ jobs:
           assert 'workflow_call' in on
           secrets = on['workflow_call']['secrets']
           assert secrets['CLOUDFLARE_API_TOKEN']['required'] is False
-          assert secrets['CLOUDFLARE_ACCOUNT_ID']['required'] is False
+          assert 'CLOUDFLARE_ACCOUNT_ID' not in secrets
           inputs = on['workflow_call']['inputs']
           assert inputs['deploy-cli']['default'] == 'wrangler'
           assert inputs['wrangler-version']['default'] == 'lockfile'
@@ -87,5 +87,11 @@ jobs:
           assert 'bash -lc' not in text
           assert 'Recheck default-branch freshness' in text
           assert text.index('Recheck default-branch freshness') < text.index('Apply D1 migrations')
+          expr = lambda key: '$' + '{{ ' + key + ' }}'
+          assert f'CLOUDFLARE_ACCOUNT_ID: {expr(\"vars.CLOUDFLARE_ACCOUNT_ID\")}' in text
+          assert 'secrets.CLOUDFLARE_ACCOUNT_ID' not in text
+          docker_text = pathlib.Path('.github/workflows/deploy-docker.yml').read_text()
+          for var_name in ('DEPLOY_PHASE', 'DEPLOY_URL', 'DEPLOY_ORIGIN_MARKER'):
+              assert f'{var_name}: {expr(\"vars.\" + var_name)}' in docker_text
           print('release-source and deploy-worker contracts are valid')
           "

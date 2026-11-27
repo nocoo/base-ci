@@ -1,5 +1,12 @@
 # Changelog
 
+## v2026.25 - 2026-11-27
+
+- Cache `pnpm` store automatically in `.github/actions/setup-js` (`cache: true` default, keyed by `runner.os`, resolved `pnpm` version, and deterministic SHA-256 hash across declared `pnpm-lock.yaml` files).
+- Add opt-in `auto-rollback` and one-click rollback (`rollback-sha` in `deploy-docker.yml`, `rollback-version` in `deploy-worker.yml`) to `D4`/`D5`:
+  - `deploy-docker.yml`: records `.base-ci-releases/current.json` and `previous.json` beside per-SHA release manifests, supports direct rollback via `rollback-sha` (skipping `D2` build), and restores the previous manifest automatically when `auto-rollback: true` and remote verify or `D5: Verify` fails.
+  - `deploy-worker.yml`: supports direct `rollback-version` (`previous` or Worker version ID) and automatic `wrangler rollback --yes` on `D5: Verify` failure when `auto-rollback: true` (standard Wrangler CLI deploys without custom `deploy-script`).
+
 ## v2026.24 - 2026-11-27
 
 - Split `.github/workflows/deploy-pages.yml` into `d2-artifact` (`D1`–`D2`) -> `d4-deploy` (`D4`–`D5`) jobs with consecutive artifact indexing checks so `actions/deploy-pages` reliably observes `github-pages` across GitHub Actions read replicas.

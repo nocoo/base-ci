@@ -1,5 +1,5 @@
 # Reusable Workers deployment (D1-D5, same-run quality-gated). Pin callers to a full commit SHA.
-# Internal composite: nocoo/base-ci/.github/actions/setup-js@617779398889d48f867f463b05ffd0b7561376d3 (see .github/internal-provider-pin.txt)
+# Internal composite: nocoo/base-ci/.github/actions/setup-js@a613758b5ee8533dfdf0289e6cade788dbf8e2dc (see .github/internal-provider-pin.txt)
 # Do not change internal pins to relative paths (caller checkout is consumer source).
 
 name: Deploy Worker
@@ -127,6 +127,14 @@ on:
         description: Seconds between verify attempts
         type: number
         default: 5
+      auto-rollback:
+        description: Automatically run wrangler rollback if D5 verify fails (Wrangler CLI without custom deploy-script)
+        type: boolean
+        default: false
+      rollback-version:
+        description: Optional Worker version ID or previous to roll back via wrangler rollback (skips D2/D3/D4 deploy)
+        type: string
+        default: ""
 
     secrets:
       CLOUDFLARE_API_TOKEN:
@@ -176,6 +184,8 @@ jobs:
           D1_DATABASES: ${{ inputs.d1-databases }}
           D1_COMMAND: ${{ inputs.d1-command }}
           VERIFY_COMMAND: ${{ inputs.verify-command }}
+          AUTO_ROLLBACK: ${{ inputs.auto-rollback }}
+          ROLLBACK_VERSION: ${{ inputs.rollback-version }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -185,6 +195,16 @@ jobs:
           if [ -z "${VERIFY_COMMAND// /}" ]; then
             echo "::error::verify-command is mandatory (D5: Verify)"
             exit 1
+          fi
+          if [ -n "${ROLLBACK_VERSION// /}" ]; then
+            if [ "$DEPLOY_CLI" != "wrangler" ] || [ -n "$DEPLOY_SCRIPT" ]; then
+              echo "::error::rollback-version requires deploy-cli: wrangler without deploy-script"
+              exit 1
+            fi
+            if [[ ! "$ROLLBACK_VERSION" =~ ^(previous|[0-9a-fA-F-]{8,64})$ ]]; then
+              echo "::error::rollback-version must be 'previous' or a Worker version ID"
+              exit 1
+            fi
           fi
           exact='^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$'
           case "$PACKAGE_MANAGER" in
@@ -354,12 +374,12 @@ jobs:
           (inputs.wrangler-version == '' || inputs.wrangler-version == 'lockfile') &&
           (inputs.deploy-script == '' || inputs.d1-migrations)
         id: locked-wrangler
-        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@617779398889d48f867f463b05ffd0b7561376d3
+        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
         with:
           working-directory: ${{ steps.paths.outputs.working-directory }}
 
       - name: "D1: Preflight — Setup JS"
-        uses: nocoo/base-ci/.github/actions/setup-js@617779398889d48f867f463b05ffd0b7561376d3
+        uses: nocoo/base-ci/.github/actions/setup-js@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -408,14 +428,14 @@ jobs:
           PY
 
       - name: "D2: Artifact — Download CI build artifact"
-        if: inputs.artifact-name != ''
+        if: inputs.rollback-version == '' && inputs.artifact-name != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ inputs.artifact-name }}
           path: ${{ steps.paths.outputs.artifact-path }}
 
       - name: "D2: Artifact — Unpack CI build artifact"
-        if: inputs.artifact-unpack-command != ''
+        if: inputs.rollback-version == '' && inputs.artifact-unpack-command != ''
         working-directory: ${{ steps.paths.outputs.working-directory }}
         env:
           UNPACK_COMMAND: ${{ inputs.artifact-unpack-command }}
@@ -423,7 +443,7 @@ jobs:
         run: bash -euo pipefail -c "$UNPACK_COMMAND"
 
       - name: "D2: Artifact — Build"
-        if: inputs.build-command != ''
+        if: inputs.rollback-version == '' && inputs.build-command != ''
         working-directory: ${{ steps.paths.outputs.working-directory }}
         env:
           BUILD_COMMAND: ${{ inputs.build-command }}
@@ -431,7 +451,7 @@ jobs:
         run: bash -euo pipefail -c "$BUILD_COMMAND"
 
       - name: "D3: Migrate — Apply D1 migrations"
-        if: inputs.d1-migrations
+        if: inputs.rollback-version == '' && inputs.d1-migrations
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -471,7 +491,7 @@ jobs:
           done < <(printf '%s\n' "$D1_DATABASES" | tr ',' '\n')
 
       - name: "D4: Deploy — Run project deploy script"
-        if: inputs.deploy-script != ''
+        if: inputs.rollback-version == '' && inputs.deploy-script != ''
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -481,7 +501,7 @@ jobs:
         run: bash -euo pipefail -c "$DEPLOY_SCRIPT"
 
       - name: "D4: Deploy — Deploy Worker"
-        if: inputs.deploy-script == ''
+        if: inputs.rollback-version == '' && inputs.deploy-script == ''
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -507,7 +527,30 @@ jobs:
           fi
           "$CLI_BIN" $DEPLOY_COMMAND "${config[@]}"
 
+      - name: "D4: Rollback — Roll back Worker"
+        if: inputs.rollback-version != ''
+        working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLI_BIN: ${{ steps.cli.outputs.bin }}
+          WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          ROLLBACK_VERSION: ${{ inputs.rollback-version }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          config=()
+          if [ -n "$WRANGLER_CONFIG" ]; then
+            config+=(--config "$WRANGLER_CONFIG")
+          fi
+          if [ "$ROLLBACK_VERSION" = "previous" ]; then
+            "$CLI_BIN" rollback --yes --message "Rollback triggered by run $GITHUB_RUN_ID" "${config[@]}"
+          else
+            "$CLI_BIN" rollback "$ROLLBACK_VERSION" --yes --message "Rollback to $ROLLBACK_VERSION by run $GITHUB_RUN_ID" "${config[@]}"
+          fi
+
       - name: "D5: Verify — Production health check"
+        id: d5-verify
         working-directory: ${{ steps.paths.outputs.working-directory }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -541,6 +584,32 @@ jobs:
             sleep "$delay"
             i=$((i + 1))
           done
+
+      - name: "D5: Auto-Rollback — Roll back Worker on verify failure"
+        if: ${{ failure() && inputs.auto-rollback && inputs.rollback-version == '' && inputs.deploy-cli == 'wrangler' && inputs.deploy-script == '' && steps.d5-verify.outcome == 'failure' }}
+        working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLI_BIN: ${{ steps.cli.outputs.bin }}
+          WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
+          SOURCE_SHA: ${{ github.sha }}
+          D1_MIGRATIONS: ${{ inputs.d1-migrations }}
+        run: |
+          set -euo pipefail
+          config=()
+          if [ -n "$WRANGLER_CONFIG" ]; then
+            config+=(--config "$WRANGLER_CONFIG")
+          fi
+          "$CLI_BIN" rollback --yes --message "Auto-rollback after D5 verify failure on $SOURCE_SHA" "${config[@]}"
+          {
+            echo ""
+            echo "> [!WARNING]"
+            echo "> Auto-rolled back Worker via \`wrangler rollback\` after \`D5: Verify\` failed for \`$SOURCE_SHA\`."
+            if [ "$D1_MIGRATIONS" = "true" ]; then
+              echo "> Note: D1 migrations applied in D3 are forward-only and were not reverted."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary
         if: always()

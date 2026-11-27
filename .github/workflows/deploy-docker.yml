@@ -42,6 +42,14 @@ on:
         description: Optional comma-separated peers to ping after joining (defaults to VPS_HOST when tailscale is true)
         type: string
         default: ''
+      auto-rollback:
+        description: Automatically restore the previous recorded release manifest on host if remote verify or D5 fails
+        type: boolean
+        default: false
+      rollback-sha:
+        description: Optional previously deployed 40-char SHA in .base-ci-releases/<sha>.json; skips D2 build and rolls back directly
+        type: string
+        default: ''
     secrets:
       VPS_HOST:
         required: false
@@ -92,6 +100,7 @@ jobs:
       sha: ${{ github.sha }}
       matrix: ${{ steps.plan.outputs.matrix }}
       run-id: ${{ format('{0}', github.run_id) }}
+      rollback-sha: ${{ inputs.rollback-sha }}
     steps:
       - name: Verify main ref and required inputs
         env:
@@ -100,6 +109,7 @@ jobs:
           DEPLOY_DIRECTORY: ${{ inputs.deploy-directory }}
           REMOTE_VERIFY_COMMAND: ${{ inputs.remote-verify-command }}
           VERIFY_COMMAND: ${{ inputs.verify-command }}
+          ROLLBACK_SHA: ${{ inputs.rollback-sha }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -116,14 +126,25 @@ jobs:
               exit 1
             fi
           fi
+          if [ -n "${ROLLBACK_SHA// /}" ]; then
+            if [[ ! "$ROLLBACK_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::rollback-sha must be a 40-character lowercase git commit SHA"
+              exit 1
+            fi
+            if [ "$DEPLOY_OVER_SSH" != "true" ]; then
+              echo "::error::rollback-sha requires deploy-over-ssh: true"
+              exit 1
+            fi
+          fi
       - id: plan
-        uses: nocoo/base-ci/.github/actions/docker-manifest@617779398889d48f867f463b05ffd0b7561376d3
+        uses: nocoo/base-ci/.github/actions/docker-manifest@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ github.sha }}
 
   d2-artifact:
     name: "D2: Artifact"
+    if: inputs.rollback-sha == ''
     needs: d1-preflight
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -202,7 +223,7 @@ jobs:
 
   d4-deploy:
     name: "D4: Deploy"
-    if: inputs.deploy-over-ssh
+    if: ${{ inputs.deploy-over-ssh && !failure() && !cancelled() && (needs.d2-artifact.result == 'success' || (inputs.rollback-sha != '' && needs.d2-artifact.result == 'skipped')) }}
     needs: [d1-preflight, d2-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -239,12 +260,14 @@ jobs:
             done
           fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: inputs.rollback-sha == ''
         with:
           pattern: base-ci-image-*-${{ needs.d1-preflight.outputs.sha }}
           path: base-ci-digests
           merge-multiple: true
       - id: manifest
-        uses: nocoo/base-ci/.github/actions/docker-manifest@617779398889d48f867f463b05ffd0b7561376d3
+        if: inputs.rollback-sha == ''
+        uses: nocoo/base-ci/.github/actions/docker-manifest@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ needs.d1-preflight.outputs.sha }}
@@ -269,10 +292,122 @@ jobs:
           echo '::error::SSH host is unreachable'
           exit 1
       - name: Deploy verified images
-        uses: nocoo/base-ci/.github/actions/ssh-deploy@617779398889d48f867f463b05ffd0b7561376d3
+        uses: nocoo/base-ci/.github/actions/ssh-deploy@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
         env:
           IMAGE_SHA: ${{ needs.d1-preflight.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
+          DEPLOY_DIRECTORY: ${{ inputs.deploy-directory }}
+          GHCR_PULL_USER: ${{ secrets.GHCR_PULL_USER }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          REMOTE_VERIFY_COMMAND: ${{ inputs.remote-verify-command }}
+          AUTO_ROLLBACK: ${{ inputs.auto-rollback }}
+          ROLLBACK_SHA: ${{ inputs.rollback-sha }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          user: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          known-hosts: ${{ secrets.VPS_KNOWN_HOSTS }}
+          envs: IMAGE_SHA RELEASE_IMAGES DEPLOY_DIRECTORY GHCR_PULL_USER GHCR_PULL_TOKEN REMOTE_VERIFY_COMMAND AUTO_ROLLBACK ROLLBACK_SHA
+          script: |
+            set -euo pipefail
+            umask 077
+            cd -- "$DEPLOY_DIRECTORY"
+            command -v python3 >/dev/null
+            printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_PULL_USER" --password-stdin
+            mkdir -p .base-ci-releases
+
+            apply_manifest() {
+              local manifest_json="$1"
+              local pull_images="$2"
+              local workdir
+              workdir="$(mktemp -d .base-ci-deploy.XXXXXX)"
+              docker compose config --format json > "$workdir/current.json"
+              RELEASE_MANIFEST_JSON="$manifest_json" python3 - "$workdir" <<'PY'
+            import json, os, pathlib, sys
+            root = pathlib.Path(sys.argv[1])
+            config = json.loads((root / 'current.json').read_text())
+            images = json.loads(os.environ['RELEASE_MANIFEST_JSON'])
+            for entry in images:
+                service = entry['service']
+                if service not in config['services']:
+                    raise SystemExit(f'Unknown Compose service: {service}')
+                config['services'][service]['image'] = entry['image'] + '@' + entry['digest']
+            (root / 'release.json').write_text(json.dumps(config))
+            (root / 'services').write_text('\n'.join(x['service'] for x in images) + '\n')
+            PY
+              local services=()
+              while IFS= read -r service; do
+                services+=("$service")
+                if [ "$pull_images" = "1" ]; then
+                  docker compose --project-directory "$PWD" -f "$workdir/release.json" pull "$service"
+                fi
+              done < "$workdir/services"
+              docker compose --project-directory "$PWD" -f "$workdir/release.json" up -d --no-deps "${services[@]}"
+              rm -rf "$workdir"
+            }
+
+            if [ -n "${ROLLBACK_SHA:-}" ]; then
+              manifest_file=".base-ci-releases/$ROLLBACK_SHA.json"
+              if [ ! -s "$manifest_file" ]; then
+                echo "::error::Missing release manifest for rollback-sha: $manifest_file"
+                exit 1
+              fi
+              target_manifest="$(cat "$manifest_file")"
+              apply_manifest "$target_manifest" 1
+              bash -euo pipefail -c "$REMOTE_VERIFY_COMMAND"
+              cp "$manifest_file" .base-ci-releases/current.json
+              exit 0
+            fi
+
+            prev_snapshot=".base-ci-releases/.prev-for-$IMAGE_SHA.json"
+            rm -f "$prev_snapshot"
+            if [ -s .base-ci-releases/current.json ]; then
+              cp .base-ci-releases/current.json "$prev_snapshot"
+            else
+              prev_candidate=""
+              for f in $(ls -1t .base-ci-releases/*.json 2>/dev/null || true); do
+                base="$(basename "$f")"
+                case "$base" in
+                  current.json|previous.json|.prev-*|"$IMAGE_SHA.json") continue ;;
+                  *) prev_candidate="$f"; break ;;
+                esac
+              done
+              if [ -n "$prev_candidate" ] && [ -s "$prev_candidate" ]; then
+                cp "$prev_candidate" "$prev_snapshot"
+              fi
+            fi
+
+            apply_manifest "$RELEASE_IMAGES" 1
+            if ! bash -euo pipefail -c "$REMOTE_VERIFY_COMMAND"; then
+              if [ "${AUTO_ROLLBACK:-false}" = "true" ] && [ -s "$prev_snapshot" ]; then
+                echo "::warning::Remote verify failed; restoring previous Docker release from $prev_snapshot"
+                apply_manifest "$(cat "$prev_snapshot")" 0
+                bash -euo pipefail -c "$REMOTE_VERIFY_COMMAND" || true
+              fi
+              exit 1
+            fi
+
+            if [ -s .base-ci-releases/current.json ]; then
+              cp .base-ci-releases/current.json .base-ci-releases/previous.json
+            fi
+            printf '%s\n' "$RELEASE_IMAGES" > ".base-ci-releases/$IMAGE_SHA.json"
+            printf '%s\n' "$RELEASE_IMAGES" > .base-ci-releases/current.json
+      - name: "D5: Verify — Production health check"
+        id: d5-verify
+        env:
+          SOURCE_SHA: ${{ needs.d1-preflight.outputs.rollback-sha != '' && needs.d1-preflight.outputs.rollback-sha || needs.d1-preflight.outputs.sha }}
+          RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
+          VERIFY_COMMAND: ${{ inputs.verify-command }}
+          DEPLOY_PHASE: ${{ vars.DEPLOY_PHASE }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          DEPLOY_ORIGIN_MARKER: ${{ vars.DEPLOY_ORIGIN_MARKER }}
+        run: bash -euo pipefail -c "$VERIFY_COMMAND"
+      - name: "D5: Auto-Rollback — Restore previous Docker release"
+        if: ${{ failure() && inputs.auto-rollback && inputs.rollback-sha == '' && steps.d5-verify.outcome == 'failure' }}
+        uses: nocoo/base-ci/.github/actions/ssh-deploy@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
+        env:
+          IMAGE_SHA: ${{ needs.d1-preflight.outputs.sha }}
           DEPLOY_DIRECTORY: ${{ inputs.deploy-directory }}
           GHCR_PULL_USER: ${{ secrets.GHCR_PULL_USER }}
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
@@ -283,21 +418,28 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || '22' }}
           known-hosts: ${{ secrets.VPS_KNOWN_HOSTS }}
-          envs: IMAGE_SHA RELEASE_IMAGES DEPLOY_DIRECTORY GHCR_PULL_USER GHCR_PULL_TOKEN REMOTE_VERIFY_COMMAND
+          envs: IMAGE_SHA DEPLOY_DIRECTORY GHCR_PULL_USER GHCR_PULL_TOKEN REMOTE_VERIFY_COMMAND
           script: |
             set -euo pipefail
             umask 077
             cd -- "$DEPLOY_DIRECTORY"
             command -v python3 >/dev/null
-            printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_PULL_USER" --password-stdin
-            workdir="$(mktemp -d .base-ci-deploy.XXXXXX)"
+            prev_file=".base-ci-releases/.prev-for-$IMAGE_SHA.json"
+            if [ ! -s "$prev_file" ]; then
+              prev_file=".base-ci-releases/previous.json"
+            fi
+            if [ ! -s "$prev_file" ]; then
+              echo "::warning::No previous Docker release manifest found for auto-rollback"
+              exit 0
+            fi
+            workdir="$(mktemp -d .base-ci-rollback.XXXXXX)"
             trap 'rm -rf "$workdir"' EXIT
             docker compose config --format json > "$workdir/current.json"
-            python3 - "$workdir" <<'PY'
+            PREV_MANIFEST_PATH="$prev_file" python3 - "$workdir" <<'PY'
             import json, os, pathlib, sys
             root = pathlib.Path(sys.argv[1])
             config = json.loads((root / 'current.json').read_text())
-            images = json.loads(os.environ['RELEASE_IMAGES'])
+            images = json.loads(pathlib.Path(os.environ['PREV_MANIFEST_PATH']).read_text())
             for entry in images:
                 service = entry['service']
                 if service not in config['services']:
@@ -309,26 +451,22 @@ jobs:
             services=()
             while IFS= read -r service; do
               services+=("$service")
-              docker compose --project-directory "$PWD" -f "$workdir/release.json" pull "$service"
             done < "$workdir/services"
             docker compose --project-directory "$PWD" -f "$workdir/release.json" up -d --no-deps "${services[@]}"
-            bash -euo pipefail -c "$REMOTE_VERIFY_COMMAND"
-            mkdir -p .base-ci-releases
-            printf '%s\n' "$RELEASE_IMAGES" > ".base-ci-releases/$IMAGE_SHA.json"
-      - name: "D5: Verify — Production health check"
-        env:
-          SOURCE_SHA: ${{ needs.d1-preflight.outputs.sha }}
-          RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
-          VERIFY_COMMAND: ${{ inputs.verify-command }}
-          DEPLOY_PHASE: ${{ vars.DEPLOY_PHASE }}
-          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
-          DEPLOY_ORIGIN_MARKER: ${{ vars.DEPLOY_ORIGIN_MARKER }}
-        run: bash -euo pipefail -c "$VERIFY_COMMAND"
+            cp "$prev_file" .base-ci-releases/current.json
+            bash -euo pipefail -c "$REMOTE_VERIFY_COMMAND" || true
       - name: Record release evidence
+        if: always() && (steps.manifest.outputs.release-images != '' || inputs.rollback-sha != '')
         env:
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
+          ROLLBACK_SHA: ${{ inputs.rollback-sha }}
+          D5_OUTCOME: ${{ steps.d5-verify.outcome }}
         run: |
           {
-            echo 'Released verified Docker image manifest:'
-            printf '```json\n%s\n```\n' "$RELEASE_IMAGES"
+            if [ -n "$ROLLBACK_SHA" ]; then
+              echo "Rolled back Docker services to \`$ROLLBACK_SHA\` (D5 outcome: \`$D5_OUTCOME\`)."
+            else
+              echo "Released verified Docker image manifest (D5 outcome: \`$D5_OUTCOME\`):"
+              printf '```json\n%s\n```\n' "$RELEASE_IMAGES"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

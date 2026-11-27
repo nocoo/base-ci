@@ -90,6 +90,10 @@ function fixture(t, overrides = {}) {
     D1_COMMAND: '',
     DEPLOY_COMMAND: '',
     VERIFY_COMMAND: 'true',
+    AUTO_ROLLBACK: 'false',
+    ROLLBACK_VERSION: '',
+    GITHUB_RUN_ID: '12345',
+    GITHUB_STEP_SUMMARY: join(rootDir, 'summary.md'),
     ...overrides,
   };
   function binary(cli, version, directory = '.') {
@@ -238,7 +242,7 @@ test('script override without shared migrations requires neither CLI version nor
     assert.equal(missing.status, 1, missing.stderr);
   }
   assert.match(workflow, /name: "D1: Preflight — Locate locked deployment CLI"\n\s+if: inputs\.deploy-script == '' \|\| inputs\.d1-migrations/);
-  assert.match(workflow, /name: "D4: Deploy — Deploy Worker"\n\s+if: inputs\.deploy-script == ''/);
+  assert.match(workflow, /name: "D4: Deploy — Deploy Worker"\n\s+if: inputs\.rollback-version == '' && inputs\.deploy-script == ''/);
 });
 
 test('invalid branch ref or empty verify-command fails fast in preflight', t => {
@@ -260,7 +264,9 @@ test('D1-D5 steps preserve strict execution order in deploy-worker, deploy-docke
     'D3: Migrate — Apply D1 migrations',
     'D4: Deploy — Run project deploy script',
     'D4: Deploy — Deploy Worker',
+    'D4: Rollback — Roll back Worker',
     'D5: Verify — Production health check',
+    'D5: Auto-Rollback — Roll back Worker on verify failure',
   ];
   const positions = names.map((name) => workflow.indexOf(`      - name: "${name}"\n`));
   assert.ok(positions.every((position) => position >= 0), `Missing step in positions: ${positions}`);
@@ -272,11 +278,49 @@ test('D1-D5 steps preserve strict execution order in deploy-worker, deploy-docke
   assert.match(dockerWorkflow, /d4-deploy:/);
   assert.match(dockerWorkflow, /deploy-over-ssh:/);
   assert.match(dockerWorkflow, /scope=\$\{\{ matrix\.image\.cacheScope \}\}/);
+  assert.match(dockerWorkflow, /auto-rollback:/);
+  assert.match(dockerWorkflow, /rollback-sha:/);
+  assert.match(dockerWorkflow, /D5: Auto-Rollback — Restore previous Docker release/);
 
   assert.match(pagesWorkflow, /D1: Preflight/);
   assert.match(pagesWorkflow, /D2: Artifact/);
   assert.match(pagesWorkflow, /D4: Deploy/);
   assert.match(pagesWorkflow, /D5: Verify/);
+});
+
+test('deploy-worker validates rollback-version and invokes wrangler rollback cleanly', t => {
+  const sourceSha = 'deadbeef1234567890abcdef1234567890abcdef';
+  const f = fixture(t, { ROLLBACK_VERSION: 'previous', WRANGLER_CONFIG: 'wrangler.jsonc', SOURCE_SHA: sourceSha });
+  f.binary('wrangler', '4.131.1');
+  f.run('D1: Preflight — Verify main ref and inputs');
+  f.locate();
+  f.run('D4: Rollback — Roll back Worker');
+  f.run('D5: Auto-Rollback — Roll back Worker on verify failure');
+  assert.deepEqual(f.calls(), [
+    ['wrangler', '--version'],
+    ['wrangler', 'rollback', '--yes', '--message', 'Rollback triggered by run 12345', '--config', 'wrangler.jsonc'],
+    ['wrangler', 'rollback', '--yes', '--message', `Auto-rollback after D5 verify failure on ${sourceSha}`, '--config', 'wrangler.jsonc'],
+  ]);
+
+  // Explicit version ID
+  const f2 = fixture(t, { ROLLBACK_VERSION: '1234abcd-5678-90ef-1234-567890abcdef' });
+  f2.binary('wrangler', '4.131.1');
+  f2.run('D1: Preflight — Verify main ref and inputs');
+  f2.locate();
+  f2.run('D4: Rollback — Roll back Worker');
+  assert.deepEqual(f2.calls(), [
+    ['wrangler', '--version'],
+    ['wrangler', 'rollback', '1234abcd-5678-90ef-1234-567890abcdef', '--yes', '--message', 'Rollback to 1234abcd-5678-90ef-1234-567890abcdef by run 12345'],
+  ]);
+
+  // Rejects invalid rollback-version, cf CLI, or deploy-script
+  for (const bad of [
+    { ROLLBACK_VERSION: 'bad version!' },
+    { ROLLBACK_VERSION: 'previous', DEPLOY_CLI: 'cf', CF_VERSION: '1.0.0-beta.12', WRANGLER_VERSION: '' },
+    { ROLLBACK_VERSION: 'previous', DEPLOY_SCRIPT: 'bun run deploy' },
+  ]) {
+    fixture(t, bad).run('D1: Preflight — Verify main ref and inputs', 1);
+  }
 });
 
 test('release-source helper action keeps run/tag/manual inputs for legacy test coverage', () => {

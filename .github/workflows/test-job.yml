@@ -128,7 +128,7 @@ jobs:
 
       - name: Setup JS and dependencies
         if: inputs.runtime != 'none'
-        uses: nocoo/base-ci/.github/actions/setup-js@617779398889d48f867f463b05ffd0b7561376d3
+        uses: nocoo/base-ci/.github/actions/setup-js@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
         with:
           package-manager: ${{ inputs.runtime }}
           runtime-version: ${{ inputs.runtime-version }}
@@ -144,7 +144,7 @@ jobs:
           node-version: ${{ inputs.node-version }}
 
       - name: Configure test environment
-        uses: nocoo/base-ci/.github/actions/configure-env@617779398889d48f867f463b05ffd0b7561376d3
+        uses: nocoo/base-ci/.github/actions/configure-env@a613758b5ee8533dfdf0289e6cade788dbf8e2dc
         with:
           env-json: ${{ inputs.env-json }}
           secret-env-json: ${{ secrets.test-env-json }}

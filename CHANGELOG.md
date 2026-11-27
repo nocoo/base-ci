@@ -1,5 +1,9 @@
 # Changelog
 
+## v2026.22 - 2026-11-27
+
+- Fix `actions/deploy-pages` artifact metadata race in `.github/workflows/deploy-pages.yml` by granting explicit `actions: read` permission and waiting up to 30s for `github-pages` artifact indexing immediately after `actions/upload-pages-artifact`.
+
 ## v2026.21 - 2026-11-27
 
 - Unify CI/CD into single `.github/workflows/pipeline.yml` (`name: Pipeline`, `quality` -> `deploy` gated by `needs: [quality]`, `refs/heads/main`, and GitHub Environments) with canonical `D1`–`D5` deployment slots:

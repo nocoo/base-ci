@@ -69,6 +69,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+      actions: read
       pages: write
       id-token: write
     outputs:
@@ -143,6 +144,22 @@ jobs:
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: ${{ steps.paths.outputs.source-path }}
+
+      - name: "D2: Artifact — Wait for Pages artifact indexing"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 15); do
+            count=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '[.artifacts[] | select(.name == "github-pages")] | length')
+            if [ "${count:-0}" -ge 1 ]; then
+              echo "github-pages artifact indexed (attempt $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Timed out waiting for github-pages artifact metadata"
+          exit 1
 
       - name: "D4: Deploy — Deploy to GitHub Pages"
         id: d4-deploy

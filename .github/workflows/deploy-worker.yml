@@ -1,61 +1,12 @@
-# Reusable Workers release. Pin callers to a full commit SHA.
-# Internal composite: nocoo/base-ci/.github/actions/release-source@bb6d891f49960164dccaf78d198660a5a7892385 (see .github/internal-provider-pin.txt)
-# Do not change that pin to ./.github/actions/release-source (caller checkout is consumer source).
+# Reusable Workers deployment (D1-D5, same-run quality-gated). Pin callers to a full commit SHA.
+# Internal composite: nocoo/base-ci/.github/actions/setup-js@bb6d891f49960164dccaf78d198660a5a7892385 (see .github/internal-provider-pin.txt)
+# Do not change internal pins to relative paths (caller checkout is consumer source).
 
 name: Deploy Worker
 
 on:
   workflow_call:
     inputs:
-      expected-workflow-path:
-        description: Canonical CI workflow path proven by release-source
-        type: string
-        default: ".github/workflows/ci.yml"
-      expected-workflow-name:
-        description: Canonical CI workflow name proven by release-source
-        type: string
-        default: "CI"
-      expected-branch:
-        description: Branch or tag name that must equal the proven run head_branch
-        type: string
-        default: "main"
-      source-run-id:
-        description: Explicit Actions run ID (workflow_run and manual run deploys)
-        type: string
-        default: ""
-      tag:
-        description: Tag name or refs/tags/... for tag and manual tag deploys
-        type: string
-        default: ""
-      source-sha:
-        description: Optional expected SHA; must match proof and cannot replace it
-        type: string
-        default: ""
-      allowed-source-events:
-        description: Events allowed on the proven CI run
-        type: string
-        default: "push"
-      require-fresh-main:
-        description: Continuous run-id deploys must match the current expected-branch tip
-        type: boolean
-        default: true
-      package-version-match:
-        description: Require a vX.Y.Z tag to match package.json at the proven SHA
-        type: boolean
-        default: false
-      package-json-path:
-        description: package.json path used when package-version-match is true
-        type: string
-        default: "package.json"
-      required-quality-check:
-        description: Required GitHub check-run name on the proven SHA (forwarded to release-source)
-        type: string
-        default: "quality / Z1: Gate"
-      require-quality-check:
-        description: Require the quality check to exist and succeed on the proven SHA
-        type: boolean
-        default: true
-
       package-manager:
         description: bun, npm, or pnpm
         type: string
@@ -69,7 +20,7 @@ on:
         type: string
         default: ""
       working-directory:
-        description: Install and build directory relative to the repository root
+        description: Install and artifact root directory relative to the repository root
         type: string
         default: "."
       extra-install-dirs:
@@ -80,17 +31,34 @@ on:
         description: "setup-js lifecycle policy: blocked, trusted, or project"
         type: string
         default: "blocked"
-
-      build-command:
-        description: Optional build command after install (empty skips)
+      sparse-checkout:
+        description: Optional multiline sparse-checkout patterns (cone mode disabled when set)
         type: string
         default: ""
+
+      artifact-name:
+        description: Optional B1 build artifact name from the same pipeline run (preferred over build-command)
+        type: string
+        default: ""
+      artifact-path:
+        description: Repository-relative target directory to extract artifact-name into
+        type: string
+        default: "."
+      artifact-unpack-command:
+        description: Optional shell command run after downloading artifact-name (at working-directory)
+        type: string
+        default: ""
+      build-command:
+        description: Optional fallback build command when no B1 artifact is consumed (empty skips)
+        type: string
+        default: ""
+
       deploy-cli:
         description: Project-local deployment CLI (wrangler or cf)
         type: string
         default: "wrangler"
       wrangler-version:
-        description: Exact local Wrangler version, or lockfile to read bun.lock / package-lock.json / pnpm-lock.yaml / yarn.lock (empty defaults to lockfile)
+        description: Exact local Wrangler version, or lockfile to read lockfiles under working-directory (empty defaults to lockfile)
         type: string
         default: "lockfile"
       cf-version:
@@ -113,6 +81,15 @@ on:
         description: Project deploy command; skips CLI validation unless shared D1 migrations are enabled
         type: string
         default: ""
+      deploy-env:
+        description: Optional newline-separated KEY=VALUE env pairs exposed to deploy and verify steps
+        type: string
+        default: ""
+      deploy-secret-name:
+        description: Optional environment variable name populated from secrets.DEPLOY_SECRET
+        type: string
+        default: ""
+
       d1-migrations:
         description: Apply remote D1 migrations before deploy
         type: boolean
@@ -139,9 +116,9 @@ on:
         type: number
         default: 20
       verify-command:
-        description: Project production verify command (empty skips)
+        description: Mandatory production verify command
         type: string
-        default: ""
+        required: true
       verify-retries:
         description: Bounded verify attempts (1-12)
         type: number
@@ -154,13 +131,15 @@ on:
     secrets:
       CLOUDFLARE_API_TOKEN:
         required: false
+      DEPLOY_SECRET:
+        required: false
 
     outputs:
       target-sha:
-        description: Proven commit that was released
+        description: Deployed commit SHA
         value: ${{ jobs.deploy.outputs.target-sha }}
       source-run-id:
-        description: Proven Actions run ID
+        description: Pipeline Actions run ID
         value: ${{ jobs.deploy.outputs.source-run-id }}
 
 jobs:
@@ -175,18 +154,19 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-      actions: read
     outputs:
-      target-sha: ${{ steps.source.outputs.target-sha }}
-      source-run-id: ${{ steps.source.outputs.source-run-id }}
+      target-sha: ${{ github.sha }}
+      source-run-id: ${{ format('{0}', github.run_id) }}
     steps:
-      - name: Reject floating versions and unknown policies
+      - name: "D1: Preflight — Verify main ref and inputs"
         env:
+          GITHUB_REF: ${{ github.ref }}
           PACKAGE_MANAGER: ${{ inputs.package-manager }}
           RUNTIME_VERSION: ${{ inputs.runtime-version }}
           NODE_VERSION: ${{ inputs.node-version }}
           DEPLOY_CLI: ${{ inputs.deploy-cli }}
           DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
+          DEPLOY_SECRET_NAME: ${{ inputs.deploy-secret-name }}
           WRANGLER_VERSION: ${{ inputs.wrangler-version }}
           CF_VERSION: ${{ inputs.cf-version }}
           WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
@@ -195,8 +175,17 @@ jobs:
           D1_MIGRATIONS: ${{ inputs.d1-migrations }}
           D1_DATABASES: ${{ inputs.d1-databases }}
           D1_COMMAND: ${{ inputs.d1-command }}
+          VERIFY_COMMAND: ${{ inputs.verify-command }}
         run: |
           set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::deploy-worker must run only on refs/heads/main (got $GITHUB_REF)"
+            exit 1
+          fi
+          if [ -z "${VERIFY_COMMAND// /}" ]; then
+            echo "::error::verify-command is mandatory (D5: Verify)"
+            exit 1
+          fi
           exact='^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$'
           case "$PACKAGE_MANAGER" in
             bun|npm|pnpm) ;;
@@ -206,6 +195,10 @@ jobs:
             blocked|trusted|project) ;;
             *) echo "::error::install-policy must be blocked, trusted, or project"; exit 1 ;;
           esac
+          if [ -n "$DEPLOY_SECRET_NAME" ] && [[ ! "$DEPLOY_SECRET_NAME" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+            echo "::error::deploy-secret-name must match ^[A-Z][A-Z0-9_]*$"
+            exit 1
+          fi
           wrangler_from_lockfile=0
           case "$DEPLOY_CLI" in
             wrangler)
@@ -253,51 +246,40 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve release source
-        id: source
-        uses: nocoo/base-ci/.github/actions/release-source@bb6d891f49960164dccaf78d198660a5a7892385
-        with:
-          github-token: ${{ github.token }}
-          expected-workflow-path: ${{ inputs.expected-workflow-path }}
-          expected-workflow-name: ${{ inputs.expected-workflow-name }}
-          expected-branch: ${{ inputs.expected-branch }}
-          source-run-id: ${{ inputs.source-run-id }}
-          tag: ${{ inputs.tag }}
-          source-sha: ${{ inputs.source-sha }}
-          allowed-source-events: ${{ inputs.allowed-source-events }}
-          require-fresh-main: ${{ inputs.require-fresh-main }}
-          package-version-match: ${{ inputs.package-version-match }}
-          package-json-path: ${{ inputs.package-json-path }}
-          required-quality-check: ${{ inputs.required-quality-check }}
-          require-quality-check: ${{ inputs.require-quality-check }}
-
-      - name: Checkout proven SHA
+      - name: "D1: Preflight — Checkout (sparse)"
+        if: inputs.sparse-checkout != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.source.outputs.target-sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: ${{ inputs.sparse-checkout }}
 
-      - name: Confirm checkout matches proven SHA
-        env:
-          EXPECTED_SHA: ${{ steps.source.outputs.target-sha }}
-        run: |
-          set -euo pipefail
-          actual=$(git rev-parse HEAD)
-          if [ "$actual" != "$EXPECTED_SHA" ]; then
-            echo "::error::Checked out $actual, expected $EXPECTED_SHA"
-            exit 1
-          fi
+      - name: "D1: Preflight — Checkout"
+        if: inputs.sparse-checkout == ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          filter: blob:none
 
-      - name: Normalize repository-relative paths
+      - name: "D1: Preflight — Normalize paths and credentials"
         id: paths
         env:
           WORKING_DIRECTORY: ${{ inputs.working-directory }}
           WRANGLER_WORKING_DIRECTORY: ${{ inputs.wrangler-working-directory }}
+          ARTIFACT_PATH: ${{ inputs.artifact-path }}
           WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
           EXTRA_INSTALL_DIRS: ${{ inputs.extra-install-dirs }}
+          DEPLOY_ENV: ${{ inputs.deploy-env }}
+          DEPLOY_SECRET_NAME: ${{ inputs.deploy-secret-name }}
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           python3 - <<'PY'
-          import os, sys
+          import os, re, sys
 
           def rel(name, value, allow_empty=False, default="."):
               raw = (value or "").strip()
@@ -314,8 +296,16 @@ jobs:
                   sys.exit(1)
               return "/".join(part for part in parts if part not in ("", "."))
 
+          if not os.environ.get("CLOUDFLARE_API_TOKEN"):
+              print("::error::CLOUDFLARE_API_TOKEN is empty in the deployment environment", file=sys.stderr)
+              sys.exit(1)
+          if not os.environ.get("CLOUDFLARE_ACCOUNT_ID"):
+              print("::error::CLOUDFLARE_ACCOUNT_ID is empty in the deployment environment", file=sys.stderr)
+              sys.exit(1)
+
           workdir = rel("working-directory", os.environ.get("WORKING_DIRECTORY", "."))
           wrangler_wd = rel("wrangler-working-directory", os.environ.get("WRANGLER_WORKING_DIRECTORY", ""), True, workdir)
+          artifact_path = rel("artifact-path", os.environ.get("ARTIFACT_PATH", "."), True, ".")
           config = (os.environ.get("WRANGLER_CONFIG") or "").strip()
           if config:
               rel("wrangler-config", config)
@@ -324,15 +314,41 @@ jobs:
               item = item.strip()
               if item:
                   extras.append(rel("extra-install-dirs", item))
+
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"working-directory={workdir}\n")
               fh.write(f"wrangler-working-directory={wrangler_wd}\n")
+              fh.write(f"artifact-path={artifact_path}\n")
               fh.write("extra-install-dirs<<EOF\n")
               fh.write("\n".join(extras) + ("\n" if extras else ""))
               fh.write("EOF\n")
+
+          env_lines = []
+          for raw_line in (os.environ.get("DEPLOY_ENV") or "").splitlines():
+              line = raw_line.strip()
+              if not line:
+                  continue
+              if "=" not in line:
+                  print(f"::error::Invalid deploy-env entry (expected KEY=VALUE): {line}", file=sys.stderr)
+                  sys.exit(1)
+              k, v = line.split("=", 1)
+              if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                  print(f"::error::Invalid deploy-env variable name: {k}", file=sys.stderr)
+                  sys.exit(1)
+              env_lines.append((k, v))
+
+          secret_name = (os.environ.get("DEPLOY_SECRET_NAME") or "").strip()
+          secret_val = os.environ.get("DEPLOY_SECRET") or ""
+          if secret_name and secret_val:
+              env_lines.append((secret_name, secret_val))
+
+          if env_lines:
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as efh:
+                  for k, v in env_lines:
+                      efh.write(f"{k}<<__BASE_CI_EOF__\n{v}\n__BASE_CI_EOF__\n")
           PY
 
-      - name: Resolve locked Wrangler version
+      - name: "D1: Preflight — Resolve locked Wrangler version"
         if: >-
           inputs.deploy-cli == 'wrangler' &&
           (inputs.wrangler-version == '' || inputs.wrangler-version == 'lockfile') &&
@@ -342,7 +358,7 @@ jobs:
         with:
           working-directory: ${{ steps.paths.outputs.working-directory }}
 
-      - name: Setup JS and frozen install
+      - name: "D1: Preflight — Setup JS"
         uses: nocoo/base-ci/.github/actions/setup-js@bb6d891f49960164dccaf78d198660a5a7892385
         with:
           package-manager: ${{ inputs.package-manager }}
@@ -352,7 +368,7 @@ jobs:
           extra-install-dirs: ${{ steps.paths.outputs.extra-install-dirs }}
           install-policy: ${{ inputs.install-policy }}
 
-      - name: Locate locked deployment CLI
+      - name: "D1: Preflight — Locate locked deployment CLI"
         if: inputs.deploy-script == '' || inputs.d1-migrations
         id: cli
         env:
@@ -363,7 +379,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import os, re, sys
+          import os, re, subprocess, sys
 
           cli = os.environ["DEPLOY_CLI"]
           def abs_bin(root):
@@ -379,7 +395,6 @@ jobs:
           if not bin_path:
               print(f"::error::Locked local {cli} binary not found after frozen install", file=sys.stderr)
               sys.exit(1)
-          import subprocess
           reported = subprocess.check_output([bin_path, "--version"], text=True, stderr=subprocess.STDOUT).strip()
           expected = os.environ["CLI_VERSION"]
           match = re.search(r"(\d+\.\d+\.\d+(?:[.-][A-Za-z0-9.-]+)?)", reported)
@@ -392,50 +407,30 @@ jobs:
           print(f"Using {bin_path} ({parsed})")
           PY
 
-      - name: Build
+      - name: "D2: Artifact — Download CI build artifact"
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ steps.paths.outputs.artifact-path }}
+
+      - name: "D2: Artifact — Unpack CI build artifact"
+        if: inputs.artifact-unpack-command != ''
+        working-directory: ${{ steps.paths.outputs.working-directory }}
+        env:
+          UNPACK_COMMAND: ${{ inputs.artifact-unpack-command }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: bash -euo pipefail -c "$UNPACK_COMMAND"
+
+      - name: "D2: Artifact — Build"
         if: inputs.build-command != ''
         working-directory: ${{ steps.paths.outputs.working-directory }}
         env:
           BUILD_COMMAND: ${{ inputs.build-command }}
+          SOURCE_SHA: ${{ github.sha }}
         run: bash -euo pipefail -c "$BUILD_COMMAND"
 
-      - name: Require Cloudflare credentials
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          missing=0
-          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN is empty in the deployment environment"
-            missing=1
-          fi
-          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
-            echo "::error::CLOUDFLARE_ACCOUNT_ID is empty in the deployment environment"
-            missing=1
-          fi
-          exit "$missing"
-
-      - name: Recheck default-branch freshness
-        if: inputs.require-fresh-main && inputs.tag == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EXPECTED_SHA: ${{ steps.source.outputs.target-sha }}
-          BRANCH: ${{ inputs.expected-branch }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]+$ ]] || [[ "$BRANCH" == *..* ]]; then
-            echo "::error::expected-branch is invalid"
-            exit 1
-          fi
-          tip=$(gh api "repos/${REPO}/git/ref/heads/${BRANCH}" --jq .object.sha)
-          if [ "$tip" != "$EXPECTED_SHA" ]; then
-            echo "::error::Stale deploy: $EXPECTED_SHA is not the current $BRANCH tip $tip"
-            exit 1
-          fi
-
-      - name: Apply D1 migrations
+      - name: "D3: Migrate — Apply D1 migrations"
         if: inputs.d1-migrations
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
         env:
@@ -475,21 +470,23 @@ jobs:
             fi
           done < <(printf '%s\n' "$D1_DATABASES" | tr ',' '\n')
 
-      - name: Run project deploy script
+      - name: "D4: Deploy — Run project deploy script"
         if: inputs.deploy-script != ''
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          SOURCE_SHA: ${{ github.sha }}
           DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
         run: bash -euo pipefail -c "$DEPLOY_SCRIPT"
 
-      - name: Deploy Worker
+      - name: "D4: Deploy — Deploy Worker"
         if: inputs.deploy-script == ''
         working-directory: ${{ steps.paths.outputs.wrangler-working-directory }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          SOURCE_SHA: ${{ github.sha }}
           DEPLOY_CLI: ${{ inputs.deploy-cli }}
           CLI_BIN: ${{ steps.cli.outputs.bin }}
           WRANGLER_CONFIG: ${{ inputs.wrangler-config }}
@@ -510,10 +507,10 @@ jobs:
           fi
           "$CLI_BIN" $DEPLOY_COMMAND "${config[@]}"
 
-      - name: Verify deployment
-        if: inputs.verify-command != ''
+      - name: "D5: Verify — Production health check"
         working-directory: ${{ steps.paths.outputs.working-directory }}
         env:
+          SOURCE_SHA: ${{ github.sha }}
           VERIFY_COMMAND: ${{ inputs.verify-command }}
           VERIFY_RETRIES: ${{ inputs.verify-retries }}
           VERIFY_RETRY_SECONDS: ${{ inputs.verify-retry-seconds }}
@@ -546,14 +543,18 @@ jobs:
       - name: Summary
         if: always()
         env:
-          TARGET_SHA: ${{ steps.source.outputs.target-sha }}
-          SOURCE_RUN: ${{ steps.source.outputs.source-run-id }}
+          TARGET_SHA: ${{ github.sha }}
+          SOURCE_RUN: ${{ format('{0}', github.run_id) }}
           ENVIRONMENT: ${{ inputs.environment }}
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
         run: |
           {
-            echo "### Deploy Worker"
+            echo "### Deploy Worker (D1-D5)"
             echo ""
             echo "- Environment: \`$ENVIRONMENT\`"
-            echo "- Run: \`$SOURCE_RUN\`"
+            echo "- Pipeline Run: \`$SOURCE_RUN\`"
             echo "- SHA: \`$TARGET_SHA\`"
+            if [ -n "$ARTIFACT_NAME" ]; then
+              echo "- B1 Artifact: \`$ARTIFACT_NAME\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

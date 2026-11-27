@@ -17,29 +17,32 @@
 | `test-job.yml` | 单条测试命令、调用方矩阵、原生运行时和浏览器 |
 | `security.yml` | 多 lockfile 依赖检查、目录或完整 Git 历史扫描 |
 | `workflow-lint.yml` | actionlint、YAML 与不可变引用检查 |
-| `deploy-worker.yml` | 校验 CI 来源后构建、迁移和部署 Worker |
-| `deploy-docker.yml` | 同一提交的镜像摘要、Compose 发布与健康检查 |
+| `deploy-worker.yml` | 同 Run `D1`–`D5` 复用 `B1` 产物、迁移并部署 Worker（含强制 `D5: Verify`） |
+| `deploy-docker.yml` | 同 Run `D1`–`D5` 共享 `P1` 缓存推送 GHCR（支持仅推镜像或 SSH Compose 部署） |
+| `deploy-pages.yml` | 同 Run `D1`–`D5` 消费 `B1` 产物发布 GitHub Pages 并做上线验证 |
 | `lint-workflows` / `scan-secrets` / `scan-dependencies` / `setup-playwright` / `z1-gate` | 面向自建槽位工作流的轻量 S3 / G1 / G2 / L4（Linux `ldd` 自检按需跳过 `apt-get install-deps`）/ Z1 composite actions |
 
 ## 使用
 
-在消费仓库创建 `.github/workflows/ci.yml`。将 `BASE_CI_SHA` 替换为已审查版本的完整 40 位提交 SHA，不能直接使用占位符：
+在消费仓库创建 `.github/workflows/pipeline.yml`（统一入口；无 CD 的仓可省略 `deploy` 作业）。将 `BASE_CI_SHA` 替换为已审查版本的完整 40 位提交 SHA，不能直接使用占位符：
 
 ```yaml
-name: CI
+name: Pipeline
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after quality gate passes
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   quality:
-    uses: nocoo/base-ci/.github/workflows/quality.yml@BASE_CI_SHA
-    with:
-      runtime-version: '1.4.2'
-      install-policy: blocked
-      coverage-path: coverage
+    uses: ./.github/workflows/quality-slots.yml
 ```
 
 默认启用类型、lint、单元与安全检查，可选检查需显式开启。命令默认采用对应包管理器的项目脚本；先确认消费仓库存在这些脚本。`coverage-path` 必须指向真实报告。输入、原生任务、Worker 和 Docker 发布示例见[集成说明](docs/workflows.md)。

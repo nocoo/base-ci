@@ -77,6 +77,14 @@ G1 在 CI 中对检出内容执行 `gitleaks detect --no-git`。G2 扫描调用�
 
 需要非 `ubuntu-latest` runner 的仓库仍使用仓库内 `workflow_call` 工作流；作业 **显示名** 须与上表检查名后缀一致，以便 `quality / <ID>: <Name>` 对齐。详见 skill 与历史消费方范例（meowth、showtime 等）。
 
-## 发布来源证明
+## 发布与交付槽位（D1–D5，同一 Pipeline 闭环）
 
-`release-source` 在证明 workflow/run/SHA 之后，默认还要求同一 SHA 上存在成功的 **`quality / Z1: Gate`** 检查（可通过 `required-quality-check` / `require-quality-check` 覆盖）。缺少证据时失败，不回退到“最新绿色”。
+自 `v2026.21` 起，消费仓库统一采用 `.github/workflows/pipeline.yml`（`name: Pipeline`）编排 `quality`（`S1`–`Z1`）→ `deploy`（`D1`–`D5`，仅在 `push` 到 `main` 或 `workflow_dispatch(deploy=true)` 时触发，PR 恒 `skipped` 且不阻塞 `quality / Z1: Gate`）。
+
+| ID | 显示名 | 职责与核心约束 | `deploy-worker.yml` | `deploy-docker.yml` | `deploy-pages.yml` |
+| --- | --- | --- | --- | --- | --- |
+| D1 | `D1: Preflight` | 校验 `refs/heads/main`、凭据、Manifest/CLI 版本 | 校验 CF 凭据 + `sparse-checkout` + 锁定 CLI | `d1-preflight` 校验凭据与 Manifest（含 `cacheScope`） | 校验路径并配置 Pages |
+| D2 | `D2: Artifact` | **零重复构建**：下载同 Run `B1` 产物或复用共享 BuildKit 缓存 | `download-artifact`（`artifact-name`），禁重复 `build` | `d2-artifact` 使用 `scope=<repo>-<service>` 推 GHCR | `download-artifact` + `upload-pages-artifact` |
+| D3 | `D3: Migrate` | 部署前数据库迁移 | `d1 migrations apply` | 可选 / N/A | N/A |
+| D4 | `D4: Deploy` | 原子上线发布 | `wrangler deploy` / `cf deploy` | `d4-deploy` Tailscale + SSH Compose `@sha256`（`deploy-over-ssh: false` 时跳过） | `actions/deploy-pages` |
+| D5 | `D5: Verify` | **强制线上验收** | `verify-command`（必填） | 容器内 `remote-verify-command` + 外网 `verify-command`（必填） | `verify-command` 或默认 HTTP 200 探活 |

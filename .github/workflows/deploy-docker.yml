@@ -6,34 +6,25 @@ on:
       environment:
         type: string
         default: production
-      expected-workflow-path:
-        type: string
-        default: .github/workflows/ci.yml
-      expected-workflow-name:
-        type: string
-        default: CI
-      expected-branch:
-        type: string
-        default: main
-      tag:
-        type: string
-        default: ''
-      source-run-id:
-        type: string
-        default: ''
       images:
-        description: JSON array of image, service, context, file and build-args objects
+        description: JSON array of image, service, context, file, build-args, and optional cache-scope objects
         type: string
         required: true
+      deploy-over-ssh:
+        description: Deploy pushed GHCR images to a host over SSH (false for registry push-only)
+        type: boolean
+        default: true
       deploy-directory:
         type: string
-        required: true
+        required: false
+        default: ''
       remote-verify-command:
-        description: Project health checks executed in the server deployment directory
+        description: Project health checks executed in the server deployment directory (required when deploy-over-ssh is true)
         type: string
-        required: true
+        required: false
+        default: ''
       verify-command:
-        description: Project checks executed on the runner after deployment
+        description: Mandatory post-deploy or post-push verification command
         type: string
         required: true
       timeout-minutes:
@@ -51,14 +42,6 @@ on:
         description: Optional comma-separated peers to ping after joining (defaults to VPS_HOST when tailscale is true)
         type: string
         default: ''
-      required-quality-check:
-        description: Required GitHub check-run name on the proven SHA (forwarded to release-source)
-        type: string
-        default: 'quality / Z1: Gate'
-      require-quality-check:
-        description: Require the quality check to exist and succeed on the proven SHA
-        type: boolean
-        default: true
     secrets:
       VPS_HOST:
         required: false
@@ -85,11 +68,11 @@ on:
         required: false
     outputs:
       target-sha:
-        value: ${{ jobs.source.outputs.sha }}
+        value: ${{ jobs.d1-preflight.outputs.sha }}
       source-run-id:
-        value: ${{ jobs.source.outputs.run-id }}
+        value: ${{ jobs.d1-preflight.outputs.run-id }}
       release-images:
-        value: ${{ jobs.deploy.outputs.release-images }}
+        value: ${{ jobs.d4-deploy.outputs.release-images }}
 
 permissions:
   contents: read
@@ -101,50 +84,72 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  source:
+  d1-preflight:
+    name: "D1: Preflight"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      sha: ${{ steps.source.outputs.target-sha }}
+      sha: ${{ github.sha }}
       matrix: ${{ steps.plan.outputs.matrix }}
-      run-id: ${{ steps.source.outputs.source-run-id }}
+      run-id: ${{ format('{0}', github.run_id) }}
     steps:
-      - id: source
-        uses: nocoo/base-ci/.github/actions/release-source@bb6d891f49960164dccaf78d198660a5a7892385
-        with:
-          expected-workflow-path: ${{ inputs.expected-workflow-path }}
-          expected-workflow-name: ${{ inputs.expected-workflow-name }}
-          expected-branch: ${{ inputs.expected-branch }}
-          tag: ${{ inputs.tag }}
-          source-run-id: ${{ inputs.source-run-id }}
-          github-token: ${{ github.token }}
-          required-quality-check: ${{ inputs.required-quality-check }}
-          require-quality-check: ${{ inputs.require-quality-check }}
+      - name: Verify main ref and required inputs
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          DEPLOY_OVER_SSH: ${{ inputs.deploy-over-ssh }}
+          DEPLOY_DIRECTORY: ${{ inputs.deploy-directory }}
+          REMOTE_VERIFY_COMMAND: ${{ inputs.remote-verify-command }}
+          VERIFY_COMMAND: ${{ inputs.verify-command }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::deploy-docker must run only on refs/heads/main (got $GITHUB_REF)"
+            exit 1
+          fi
+          if [ -z "${VERIFY_COMMAND// /}" ]; then
+            echo "::error::verify-command is mandatory (D5: Verify)"
+            exit 1
+          fi
+          if [ "$DEPLOY_OVER_SSH" = "true" ]; then
+            if [ -z "${DEPLOY_DIRECTORY// /}" ] || [ -z "${REMOTE_VERIFY_COMMAND// /}" ]; then
+              echo "::error::deploy-directory and remote-verify-command are required when deploy-over-ssh is true"
+              exit 1
+            fi
+          fi
       - id: plan
         uses: nocoo/base-ci/.github/actions/docker-manifest@bb6d891f49960164dccaf78d198660a5a7892385
         with:
           images: ${{ inputs.images }}
-          source-sha: ${{ steps.source.outputs.target-sha }}
+          source-sha: ${{ github.sha }}
 
-  build:
-    needs: source
+  d2-artifact:
+    name: "D2: Artifact"
+    needs: d1-preflight
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.source.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.d1-preflight.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ needs.d1-preflight.outputs.sha }}
           persist-credentials: false
+          filter: blob:none
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - id: shortsha
+        env:
+          SHA: ${{ needs.d1-preflight.outputs.sha }}
+        run: echo "short=${SHA:0:7}" >> "$GITHUB_OUTPUT"
       - id: image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -155,19 +160,31 @@ jobs:
             ${{ matrix.image.build-args }}
             ${{ secrets.BUILD_ARGS }}
           tags: |
-            ${{ matrix.image.image }}:${{ needs.source.outputs.sha }}
+            ${{ matrix.image.image }}:${{ needs.d1-preflight.outputs.sha }}
+            ${{ matrix.image.image }}:sha-${{ steps.shortsha.outputs.short }}
             ${{ matrix.image.image }}:latest
           labels: |
-            org.opencontainers.image.revision=${{ needs.source.outputs.sha }}
+            org.opencontainers.image.revision=${{ needs.d1-preflight.outputs.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=${{ matrix.image.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.service }}
+          cache-from: type=gha,scope=${{ matrix.image.cacheScope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.cacheScope }}
+      - name: "D5: Verify — Registry image check"
+        if: ${{ !inputs.deploy-over-ssh }}
+        env:
+          SOURCE_SHA: ${{ needs.d1-preflight.outputs.sha }}
+          IMAGE_NAME: ${{ matrix.image.image }}
+          IMAGE_SERVICE: ${{ matrix.image.service }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_REF: ${{ matrix.image.image }}@${{ steps.image.outputs.digest }}
+          VERIFY_COMMAND: ${{ inputs.verify-command }}
+        run: bash -euo pipefail -c "$VERIFY_COMMAND"
       - name: Record built image digest
+        if: inputs.deploy-over-ssh
         env:
           RELEASE_IMAGE: ${{ matrix.image.image }}
           RELEASE_SERVICE: ${{ matrix.image.service }}
           RELEASE_DIGEST: ${{ steps.image.outputs.digest }}
-          RELEASE_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          RELEASE_SOURCE_SHA: ${{ needs.d1-preflight.outputs.sha }}
         run: |
           node --input-type=module <<'JS'
           import { mkdirSync, writeFileSync } from 'node:fs';
@@ -176,14 +193,17 @@ jobs:
           writeFileSync(`base-ci-digests/${service}.json`, JSON.stringify({ image, service, digest, sourceSha }));
           JS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: inputs.deploy-over-ssh
         with:
-          name: base-ci-image-${{ matrix.image.service }}-${{ needs.source.outputs.sha }}
+          name: base-ci-image-${{ matrix.image.service }}-${{ needs.d1-preflight.outputs.sha }}
           path: base-ci-digests/*.json
           if-no-files-found: error
           retention-days: 14
 
-  deploy:
-    needs: [source, build]
+  d4-deploy:
+    name: "D4: Deploy"
+    if: inputs.deploy-over-ssh
+    needs: [d1-preflight, d2-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     environment: ${{ inputs.environment }}
@@ -196,9 +216,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          ref: ${{ needs.d1-preflight.outputs.sha }}
           persist-credentials: false
-      - name: Validate deployment credentials
+          filter: blob:none
+      - name: "D1: Preflight — Validate deployment credentials"
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -219,14 +240,14 @@ jobs:
           fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: base-ci-image-*-${{ needs.source.outputs.sha }}
+          pattern: base-ci-image-*-${{ needs.d1-preflight.outputs.sha }}
           path: base-ci-digests
           merge-multiple: true
       - id: manifest
         uses: nocoo/base-ci/.github/actions/docker-manifest@bb6d891f49960164dccaf78d198660a5a7892385
         with:
           images: ${{ inputs.images }}
-          source-sha: ${{ needs.source.outputs.sha }}
+          source-sha: ${{ needs.d1-preflight.outputs.sha }}
           directory: base-ci-digests
       - name: Connect Tailscale
         if: inputs.tailscale
@@ -247,22 +268,10 @@ jobs:
           done
           echo '::error::SSH host is unreachable'
           exit 1
-      - name: Recheck proven source before deployment
-        uses: nocoo/base-ci/.github/actions/release-source@bb6d891f49960164dccaf78d198660a5a7892385
-        with:
-          expected-workflow-path: ${{ inputs.expected-workflow-path }}
-          expected-workflow-name: ${{ inputs.expected-workflow-name }}
-          expected-branch: ${{ inputs.expected-branch }}
-          tag: ${{ inputs.tag }}
-          source-run-id: ${{ needs.source.outputs.run-id }}
-          source-sha: ${{ needs.source.outputs.sha }}
-          github-token: ${{ github.token }}
-          required-quality-check: ${{ inputs.required-quality-check }}
-          require-quality-check: ${{ inputs.require-quality-check }}
       - name: Deploy verified images
         uses: nocoo/base-ci/.github/actions/ssh-deploy@bb6d891f49960164dccaf78d198660a5a7892385
         env:
-          IMAGE_SHA: ${{ needs.source.outputs.sha }}
+          IMAGE_SHA: ${{ needs.d1-preflight.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
           DEPLOY_DIRECTORY: ${{ inputs.deploy-directory }}
           GHCR_PULL_USER: ${{ secrets.GHCR_PULL_USER }}
@@ -306,9 +315,9 @@ jobs:
             bash -euo pipefail -c "$REMOTE_VERIFY_COMMAND"
             mkdir -p .base-ci-releases
             printf '%s\n' "$RELEASE_IMAGES" > ".base-ci-releases/$IMAGE_SHA.json"
-      - name: Verify deployed service
+      - name: "D5: Verify — Production health check"
         env:
-          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          SOURCE_SHA: ${{ needs.d1-preflight.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
           VERIFY_COMMAND: ${{ inputs.verify-command }}
           DEPLOY_PHASE: ${{ vars.DEPLOY_PHASE }}
@@ -318,6 +327,8 @@ jobs:
       - name: Record release evidence
         env:
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}
-          SOURCE_SHA: ${{ needs.source.outputs.sha }}
         run: |
-          printf 'Deployed source: `%s`\n\n```json\n%s\n```\n' "$SOURCE_SHA" "$RELEASE_IMAGES" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo 'Released verified Docker image manifest:'
+            printf '```json\n%s\n```\n' "$RELEASE_IMAGES"
+          } >> "$GITHUB_STEP_SUMMARY"

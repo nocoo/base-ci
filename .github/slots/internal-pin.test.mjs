@@ -159,14 +159,12 @@ test('provider pin is not older than minimum release-source pin', () => {
   assertCommitAncestor(minimumReleaseSourcePin, providerPin);
 });
 
-test('release-source pins are consistent across deploy workflows', () => {
+test('internal action pins are consistent across deploy workflows', () => {
   const seen = new Set();
   for (const file of ['deploy-worker.yml', 'deploy-docker.yml']) {
     const text = readFileSync(join(root, '.github/workflows', file), 'utf8');
     for (const match of text.matchAll(actionRefPattern)) {
-      if (match[0].includes('release-source')) {
-        seen.add(match[1]);
-      }
+      seen.add(match[1]);
     }
   }
   assert.equal(seen.size, 1);

@@ -1,5 +1,17 @@
 # Changelog
 
+## v2026.21 - 2026-11-27
+
+- Unify CI/CD into single `.github/workflows/pipeline.yml` (`name: Pipeline`, `quality` -> `deploy` gated by `needs: [quality]`, `refs/heads/main`, and GitHub Environments) with canonical `D1`–`D5` deployment slots:
+  - `D1: Preflight` — Verify `refs/heads/main`, deployment credentials, locked CLI/runtime/Paths, or `docker-manifest` plan; eliminate cross-run `release-source` polling.
+  - `D2: Artifact` — Consume same-run `B1` build artifacts (`artifact-name` / `artifact-path` / `artifact-unpack-command`) in `deploy-worker.yml` and `deploy-pages.yml` without rebuilding, or share `<repo>-<service>` BuildKit cache scope (`cacheScope` in `docker-manifest`) with CI `P1` in `deploy-docker.yml`.
+  - `D3: Migrate` — Remote D1 migrations when enabled.
+  - `D4: Deploy` — Wrangler/`cf` deploy, Tailscale + SSH Compose `@sha256` deploy (with `deploy-over-ssh: false` registry-only push mode), or GitHub Pages deploy (`deploy-pages.yml`).
+  - `D5: Verify` — Mandatory live health/revision/HTTP verification across all three modes.
+- Add `.github/workflows/deploy-pages.yml` (`D1`–`D5` GitHub Pages reusable workflow).
+- Extend `.github/actions/docker-manifest/index.mjs` to compute normalized `cacheScope` (`<repo>-<service>` by default or explicit `cache-scope`), and add `sparse-checkout`, `deploy-env`, and `deploy-secret-name` (`DEPLOY_SECRET`) to `deploy-worker.yml`.
+- Update `.github/actions/release-source/workflow-contract.test.mjs`, `.github/actions/docker-manifest/index.test.mjs`, `.github/slots/internal-pin.test.mjs`, `.github/workflows/self-test-release.yml`, and docs (`docs/slots.md`, `docs/workflows.md`, `README.md`, `AGENTS.md`) for `v2026.21`.
+
 ## v2026.20 - 2026-11-26
 
 - Upgrade `.github/actions/setup-playwright` to skip redundant `apt-get install-deps` on Linux runners when shared libraries are already satisfied:

@@ -3,9 +3,10 @@ import { appendFileSync, readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function validateImages(images, sha) {
+export function validateImages(images, sha, repoSlug = process.env.GITHUB_REPOSITORY ?? '') {
   assert.match(sha, /^[a-f0-9]{40}$/, 'A full tested source SHA is required');
   assert.ok(Array.isArray(images) && images.length > 0, 'At least one image is required');
+  const repoName = String(repoSlug).split('/').filter(Boolean).pop() ?? '';
   const services = new Set();
   const names = new Set();
   return images.map((entry) => {
@@ -16,7 +17,10 @@ export function validateImages(images, sha) {
     assert.ok(!names.has(entry.image), 'Duplicate image');
     services.add(entry.service);
     names.add(entry.image);
-    const image = { context: '.', file: 'Dockerfile', 'build-args': '', ...entry };
+    const defaultScope = repoName ? `${repoName}-${entry.service}` : entry.service;
+    const cacheScope = entry['cache-scope'] ?? defaultScope;
+    assert.match(String(cacheScope), /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/, 'Invalid cache-scope');
+    const image = { context: '.', file: 'Dockerfile', 'build-args': '', ...entry, cacheScope };
     for (const key of ['context', 'file']) {
       assert.equal(typeof image[key], 'string');
       assert.ok(image[key] && !isAbsolute(image[key]) && !image[key].split(/[\\/]/).includes('..'), `${key} must stay inside the repository`);

@@ -33,10 +33,11 @@ Package-manager/lifecycle (`self-test.yml`) and SSH (`self-test-ssh-deploy.yml`)
 - Fixture lockfiles under `.github/fixtures/` must come from real supported package managers with no workstation registry proxy.
 - SSH self-tests: when earlier cases pass but a later one fails with `Connection closed by 127.0.0.1 port 22`, check OpenSSH per-source penalties (`PerSourcePenalties`) and connection limits (`MaxStartups`) first; neutralize them (`PerSourcePenalties no`) and re-probe the daemon afterwards.
 - Map only named test credentials into CI; production credentials belong to deployment jobs and exact GitHub environments—never map `toJSON(secrets)` wholesale.
-- Release proof validates API run/tag, repo, workflow, branch, event, exact SHA, and `quality / Z1: Gate`; reject PR/fork, stale, or mismatched evidence—never fall back to latest green or `github.sha`.
-- Production concurrency never cancels active deploys; migrations and deploys run only after source proof and freshness checks.
-- Worker releases rebuild verified source (locked Wrangler or `cf`); artifact promotion retains project-owned identity and digest checks.
-- Docker deploys use a complete same-SHA image digest manifest, preserving server Compose settings, serial pulls, and caller health checks.
+- Release gates in `pipeline.yml` enforce `needs: [quality]` (`quality / Z1: Gate`) plus `refs/heads/main` ref check in `deploy-worker.yml`, `deploy-docker.yml`, and `deploy-pages.yml`—PRs never trigger production deploys.
+- Production concurrency never cancels active deploys; migrations and deploys run only after `D1: Preflight` passes.
+- Worker releases (`D1`–`D5`) prefer `B1` build artifacts (`artifact-name`) with locked Wrangler/`cf`, optional `sparse-checkout`, and mandatory `verify-command` (`D5`).
+- Docker deploys share `<repo>-<service>` BuildKit cache scope with CI `P1`, use a complete same-SHA image digest manifest (`deploy-over-ssh: false` for registry-only), and run mandatory verification (`D5`).
+- Pages deploys use `deploy-pages.yml` (`D1`–`D5`) on `main` push (no release-tag gate) with mandatory HTTP/URL verification (`D5`).
 - Keep platform-specific deployment logic in small project adapters; require a second concrete consumer before abstracting, and never weaken tests, coverage, or security to make adoption green.
 - Publish immutable `v2026.N` tags only after provider self-tests and representative JS/native/Worker/Docker consumer CI/release validation; sync internal pins via `node .github/scripts/sync-provider-pin.mjs`.
 - Keep runtime upgrades separate from workflow-ref updates; historical moving `v2026` is not an upgrade policy. New integrations use `quality.yml`; `bun-quality.yml` stays only for existing pinned consumers.

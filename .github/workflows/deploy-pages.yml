@@ -1,0 +1,201 @@
+# Reusable GitHub Pages deployment (D1-D5, same-run quality-gated). Pin callers to a full commit SHA.
+name: Deploy Pages
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub Pages deployment environment
+        type: string
+        default: "github-pages"
+      artifact-name:
+        description: Optional B1 static build artifact name from the same pipeline run
+        type: string
+        default: ""
+      artifact-path:
+        description: Repository-relative target directory for downloaded artifact
+        type: string
+        default: "."
+      source-path:
+        description: Static site directory uploaded to GitHub Pages (defaults to artifact-path)
+        type: string
+        default: ""
+      prepare-command:
+        description: Optional shell command to prepare static site before uploading Pages artifact
+        type: string
+        default: ""
+      node-version:
+        description: Optional Node version needed by prepare-command
+        type: string
+        default: ""
+      verify-url:
+        description: Optional explicit URL for D5 verification (defaults to deployed page_url)
+        type: string
+        default: ""
+      verify-command:
+        description: Optional custom D5 verify script (runs instead of default HTTP 200 curl check)
+        type: string
+        default: ""
+      verify-retries:
+        description: Bounded verify attempts (1-12)
+        type: number
+        default: 6
+      verify-retry-seconds:
+        description: Seconds between verify attempts
+        type: number
+        default: 5
+      timeout-minutes:
+        description: Deploy job timeout
+        type: number
+        default: 15
+    outputs:
+      page-url:
+        description: Deployed GitHub Pages URL
+        value: ${{ jobs.deploy.outputs.page-url }}
+      target-sha:
+        description: Deployed commit SHA
+        value: ${{ jobs.deploy.outputs.target-sha }}
+
+jobs:
+  deploy:
+    name: Deploy Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.d4-deploy.outputs.page_url }}
+    concurrency:
+      group: ${{ format('deploy-pages-{0}', github.repository) }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    outputs:
+      page-url: ${{ steps.d4-deploy.outputs.page_url }}
+      target-sha: ${{ github.sha }}
+    steps:
+      - name: "D1: Preflight — Verify main ref and paths"
+        id: paths
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          ARTIFACT_PATH: ${{ inputs.artifact-path }}
+          SOURCE_PATH: ${{ inputs.source-path }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::deploy-pages must run only on refs/heads/main (got $GITHUB_REF)"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os, sys
+
+          def rel(name, value, default="."):
+              raw = (value or "").strip() or default
+              if raw in (".", "./"):
+                  return "."
+              parts = raw.replace("\\", "/").split("/")
+              if raw.startswith("/") or raw.startswith("~") or ".." in parts or ":" in raw:
+                  print(f"::error::{name} must be a relative path inside the repository", file=sys.stderr)
+                  sys.exit(1)
+              return "/".join(part for part in parts if part not in ("", "."))
+
+          art_path = rel("artifact-path", os.environ.get("ARTIFACT_PATH", "."))
+          src_path = rel("source-path", os.environ.get("SOURCE_PATH", ""), art_path)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"artifact-path={art_path}\n")
+              fh.write(f"source-path={src_path}\n")
+          PY
+
+      - name: "D1: Preflight — Checkout"
+        if: inputs.artifact-name == '' || inputs.prepare-command != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          filter: blob:none
+
+      - name: "D1: Preflight — Setup Node"
+        if: inputs.node-version != ''
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: "D1: Preflight — Configure Pages"
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: "D2: Artifact — Download CI build artifact"
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ steps.paths.outputs.artifact-path }}
+
+      - name: "D2: Artifact — Prepare static site"
+        if: inputs.prepare-command != ''
+        env:
+          PREPARE_COMMAND: ${{ inputs.prepare-command }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: bash -euo pipefail -c "$PREPARE_COMMAND"
+
+      - name: "D2: Artifact — Upload Pages artifact"
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: ${{ steps.paths.outputs.source-path }}
+
+      - name: "D4: Deploy — Deploy to GitHub Pages"
+        id: d4-deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+      - name: "D5: Verify — Live Pages check"
+        env:
+          VERIFY_COMMAND: ${{ inputs.verify-command }}
+          VERIFY_URL: ${{ inputs.verify-url != '' && inputs.verify-url || steps.d4-deploy.outputs.page_url }}
+          VERIFY_RETRIES: ${{ inputs.verify-retries }}
+          VERIFY_RETRY_SECONDS: ${{ inputs.verify-retry-seconds }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          retries=$VERIFY_RETRIES
+          delay=$VERIFY_RETRY_SECONDS
+          if ! [[ "$retries" =~ ^[0-9]+$ ]] || [ "$retries" -lt 1 ] || [ "$retries" -gt 12 ]; then
+            echo "::error::verify-retries must be between 1 and 12"
+            exit 1
+          fi
+          if ! [[ "$delay" =~ ^[0-9]+$ ]] || [ "$delay" -gt 60 ]; then
+            echo "::error::verify-retry-seconds must be between 0 and 60"
+            exit 1
+          fi
+          i=1
+          while [ "$i" -le "$retries" ]; do
+            echo "verify attempt $i/$retries ($VERIFY_URL)"
+            if [ -n "$VERIFY_COMMAND" ]; then
+              if bash -euo pipefail -c "$VERIFY_COMMAND"; then
+                exit 0
+              fi
+            else
+              if [ -n "$VERIFY_URL" ] && curl -fsSL "$VERIFY_URL" | grep -qiE '<html|<!doctype'; then
+                exit 0
+              fi
+            fi
+            if [ "$i" -eq "$retries" ]; then
+              echo "::error::Pages verify failed after $retries attempts"
+              exit 1
+            fi
+            sleep "$delay"
+            i=$((i + 1))
+          done
+
+      - name: Summary
+        if: always()
+        env:
+          PAGE_URL: ${{ steps.d4-deploy.outputs.page_url }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "### Deploy Pages (D1-D5)"
+            echo ""
+            echo "- URL: $PAGE_URL"
+            echo "- SHA: \`$TARGET_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -2,7 +2,7 @@ name: Self Test Release
 
 on:
   push:
-    branches: [main, feat/shared-workers-20260912]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate release-source and deploy-worker
+    name: Validate D1-D5 deploy workflows
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -26,6 +26,7 @@ jobs:
 
       - name: Helper behavioral tests
         run: |
+          node --test .github/actions/docker-manifest/index.test.mjs
           node --test .github/actions/release-source/resolve.test.mjs
           python3 -m unittest discover -s .github/actions/resolve-locked-wrangler -p 'test_*.py'
 
@@ -34,64 +35,72 @@ jobs:
           node --test .github/actions/release-source/workflow-contract.test.mjs
           node --test .github/slots/internal-pin.test.mjs
 
-      - name: Validate YAML and public interface
+      - name: Validate YAML and public D1-D5 interfaces
         run: |
-          python3 -c "
-          import pathlib, sys, yaml
+          python3 - <<'PY'
+          import pathlib, yaml
 
           def load(path):
               with open(path) as fh:
                   return yaml.safe_load(fh)
 
-          action = load('.github/actions/release-source/action.yml')
-          for required in ('github-token', 'expected-workflow-path', 'expected-workflow-name'):
-              assert required in action['inputs'], required
-              assert action['inputs'][required].get('required') is True
-          assert 'same-run-proof' not in action['inputs']
-          assert 'caller-event-name' not in action['inputs']
-          for name in ('target-sha', 'source-run-id'):
-              assert name in action['outputs'], name
+          pin = pathlib.Path('.github/internal-provider-pin.txt').read_text().strip()
+          expr = lambda key: '$' + '{{ ' + key + ' }}'
 
+          # deploy-worker.yml
           wf = load('.github/workflows/deploy-worker.yml')
           on = wf.get(True) or wf.get('on')
           assert 'workflow_call' in on
           secrets = on['workflow_call']['secrets']
           assert secrets['CLOUDFLARE_API_TOKEN']['required'] is False
+          assert secrets['DEPLOY_SECRET']['required'] is False
           assert 'CLOUDFLARE_ACCOUNT_ID' not in secrets
           inputs = on['workflow_call']['inputs']
           assert inputs['deploy-cli']['default'] == 'wrangler'
           assert inputs['wrangler-version']['default'] == 'lockfile'
           assert inputs['cf-version']['default'] == ''
-          assert inputs['deploy-command']['default'] == ''
-          assert inputs['require-fresh-main']['default'] is True
+          assert inputs['verify-command']['required'] is True
           assert inputs['install-policy']['default'] == 'blocked'
-          assert 'deploy-script' in inputs
-          assert 'artifact-mode' not in inputs
-          assert 'same-run-proof' not in inputs
-          assert 'caller-event-name' not in inputs
+          for key in ('artifact-name', 'artifact-path', 'artifact-unpack-command', 'sparse-checkout', 'deploy-script', 'deploy-env', 'deploy-secret-name'):
+              assert key in inputs, key
+          for legacy in ('source-run-id', 'expected-workflow-path', 'expected-workflow-name', 'require-fresh-main'):
+              assert legacy not in inputs, legacy
           job = wf['jobs']['deploy']
           assert job['concurrency']['cancel-in-progress'] is False
-          env_name = job['environment']['name']
-          assert 'inputs.environment' in env_name
-          pin = pathlib.Path('.github/internal-provider-pin.txt').read_text().strip()
-          assert inputs['required-quality-check']['default'] == 'quality / Z1: Gate'
+          assert 'inputs.environment' in job['environment']['name']
           uses = [step.get('uses', '') for step in job['steps'] if isinstance(step, dict)]
-          assert any(item.startswith(f'nocoo/base-ci/.github/actions/release-source@{pin}') for item in uses)
           assert any(item.startswith(f'nocoo/base-ci/.github/actions/setup-js@{pin}') for item in uses)
-          source_step = next(step for step in job['steps'] if step.get('id') == 'source' or step.get('name') == 'Resolve release source')
-          assert 'required-quality-check' in source_step.get('with', {})
-          assert not any(item.startswith('./.github/actions/release-source') for item in uses)
+          assert not any('release-source' in item for item in uses)
           text = pathlib.Path('.github/workflows/deploy-worker.yml').read_text()
+          assert 'download-artifact@' in text
           assert 'wrangler-action' not in text
-          assert 'download-artifact' not in text
           assert 'bash -lc' not in text
-          assert 'Recheck default-branch freshness' in text
-          assert text.index('Recheck default-branch freshness') < text.index('Apply D1 migrations')
-          expr = lambda key: '$' + '{{ ' + key + ' }}'
-          assert f'CLOUDFLARE_ACCOUNT_ID: {expr(\"vars.CLOUDFLARE_ACCOUNT_ID\")}' in text
+          assert f'CLOUDFLARE_ACCOUNT_ID: {expr("vars.CLOUDFLARE_ACCOUNT_ID")}' in text
           assert 'secrets.CLOUDFLARE_ACCOUNT_ID' not in text
+
+          # deploy-docker.yml
+          dwf = load('.github/workflows/deploy-docker.yml')
+          don = dwf.get(True) or dwf.get('on')
+          dinputs = don['workflow_call']['inputs']
+          assert dinputs['deploy-over-ssh']['default'] is True
+          assert dinputs['verify-command']['required'] is True
+          for job_id in ('d1-preflight', 'd2-artifact', 'd4-deploy'):
+              assert job_id in dwf['jobs'], job_id
           docker_text = pathlib.Path('.github/workflows/deploy-docker.yml').read_text()
+          assert 'cacheScope' in docker_text
           for var_name in ('DEPLOY_PHASE', 'DEPLOY_URL', 'DEPLOY_ORIGIN_MARKER'):
-              assert f'{var_name}: {expr(\"vars.\" + var_name)}' in docker_text
-          print('release-source and deploy-worker contracts are valid')
-          "
+              assert f'{var_name}: {expr("vars." + var_name)}' in docker_text
+
+          # deploy-pages.yml
+          pwf = load('.github/workflows/deploy-pages.yml')
+          pon = pwf.get(True) or pwf.get('on')
+          pinputs = pon['workflow_call']['inputs']
+          assert pinputs['environment']['default'] == 'github-pages'
+          assert 'artifact-name' in pinputs and 'source-path' in pinputs
+          pjob = pwf['jobs']['deploy']
+          assert pjob['concurrency']['cancel-in-progress'] is False
+          puses = [step.get('uses', '') for step in pjob['steps'] if isinstance(step, dict)]
+          assert any(item.startswith('actions/deploy-pages@') for item in puses)
+
+          print('deploy-worker, deploy-docker, and deploy-pages D1-D5 contracts are valid')
+          PY

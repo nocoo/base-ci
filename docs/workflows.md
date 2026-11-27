@@ -12,8 +12,9 @@ Consumers keep their triggers, project commands, deployment environment and a fe
 | [test-job.yml](../.github/workflows/test-job.yml) | One command with shared setup, a caller-owned runner matrix, Python or Node without JS dependencies, and optional browser/report support |
 | [security.yml](../.github/workflows/security.yml) | Multiple lockfiles, directory or full-history secret scanning, or an existing project security gate |
 | [workflow-lint.yml](../.github/workflows/workflow-lint.yml) | Actionlint, immutable base-ci references, optional required release template and yamllint |
-| [deploy-worker.yml](../.github/workflows/deploy-worker.yml) | Rebuild a proven CI commit, optionally migrate D1, deploy locked Wrangler or cf and verify production |
-| [deploy-docker.yml](../.github/workflows/deploy-docker.yml) | Build one or more GHCR images from a proven CI commit and deploy their exact digests through Docker Compose over SSH |
+| [deploy-worker.yml](../.github/workflows/deploy-worker.yml) | Same-run `D1`–`D5` Worker delivery reusing `B1` artifacts, D1 migrations, locked Wrangler/`cf`, and mandatory verify |
+| [deploy-docker.yml](../.github/workflows/deploy-docker.yml) | Same-run `D1`–`D5` Docker delivery sharing CI `P1` BuildKit cache scope and deploying `@sha256` digests over SSH or GHCR push-only |
+| [deploy-pages.yml](../.github/workflows/deploy-pages.yml) | Same-run `D1`–`D5` GitHub Pages delivery reusing `B1` artifacts and verifying live HTTP 200 |
 
 The workflow files define the complete input and output contracts. `bun-quality.yml` is the older string-switch interface; new migrations use `quality.yml`. Historical behavior remains available through immutable commits and the `v2026.1`–`v2026.6` tags. The old moving `v2026` alias is not an upgrade policy.
 
@@ -203,139 +204,57 @@ Repositories with custom or native slot workflows (such as macOS or non-JS repos
 
 `lint-workflows` runs `actionlint -shellcheck= -pyflakes=` without `yamllint` or `setup-js` and verifies that every external `uses:` reference (ignoring `./...`) pins a full 40-hex commit SHA. `scan-secrets` installs only `gitleaks` and runs `gitleaks dir . --no-banner --redact --log-level error`. `scan-dependencies` installs only `osv-scanner`, checks every listed lockfile exists, and runs a single batched `osv-scanner scan`. `setup-playwright` normalizes `PLAYWRIGHT_BROWSERS_PATH` (`~/.cache/ms-playwright` when unset), caches browsers by OS, resolved Playwright version, and sorted browser key, and controls Linux OS shared-library installation via `install-deps`: `auto` (default; `true` is treated as `auto`) installs browsers without `--with-deps` on cache miss and runs `ldd` across cached/installed browser binaries, skipping `apt-get install-deps` when all shared libraries exist on the runner and falling back to `install-deps` if any library is missing or no browser binaries are found; `force` always runs single-pass `install --with-deps` / `install-deps`; `false` skips OS dependencies. `z1-gate` requires no `actions/checkout`, checks required/skipped jobs and matching `tested-sha` outputs, rejects undeclared `needs` by default, and writes a Markdown status table to `$GITHUB_STEP_SUMMARY`.
 
-## Release source proof
+## Unified `pipeline.yml` (`D1`–`D5`, same-run quality-gated)
 
-Both deployment workflows use [release-source](../.github/actions/release-source/action.yml). It validates GitHub API responses for the selected run: repository and head repository, workflow path and name, branch, event, completion, conclusion and exact SHA. List API filters are followed by a direct GET of the selected run.
-
-| Input | Meaning |
-| --- | --- |
-| `expected-workflow-path` | Canonical CI file, normally `.github/workflows/ci.yml` |
-| `expected-workflow-name` | Canonical CI name, normally `CI` |
-| `expected-branch` | Expected CI branch, normally `main`; pass the tag name when proving tag CI |
-| `source-run-id` | Explicit successful CI run ID, including manual deployments |
-| `tag` | Optional tag, resolved to a commit and checked against the proven CI run |
-| `required-quality-check` | Check-run name that must succeed on the proven SHA (default `quality / Z1: Gate`) |
-| `require-quality-check` | When true, missing or failed quality evidence fails the deploy |
-
-`deploy-worker.yml` and `deploy-docker.yml` expose the same defaults and forward both fields to `release-source`.
-
-There is no fallback to `github.sha` or an unrelated latest green run. PR and fork evidence is rejected. Continuous deployments check the branch tip again immediately before migration/deployment. Tagged releases prove the tag's exact commit. The source action and Worker template additionally support an expected `source-sha` and optional tag/package-version matching.
-
-The source action emits `target-sha` and `source-run-id`. A scheduled or `release` caller may present valid push-CI evidence; its trigger does not itself prove CI success.
-
-## Worker releases
+As of `v2026.21`, consumers use a single `.github/workflows/pipeline.yml` (`name: Pipeline`) that runs `quality` (`S1`–`Z1`) first and gates `deploy` (`D1`–`D5`) behind `needs: [quality]`, `refs/heads/main`, and GitHub Environment branch protection—so `pull_request` runs never deploy and `deploy` skipping on PRs never blocks `quality / Z1: Gate`.
 
 ```yaml
-name: Release
+name: Pipeline
+
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after quality gate passes
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
 jobs:
+  quality:
+    uses: ./.github/workflows/quality-slots.yml
+
   deploy:
-    if: github.event.workflow_run.conclusion == 'success'
-    permissions:
-      contents: read
-      actions: read
+    needs: [quality]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy == true)
     uses: nocoo/base-ci/.github/workflows/deploy-worker.yml@BASE_CI_SHA
     with:
-      source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
       runtime-version: '1.4.2'
-      wrangler-version: lockfile
-      environment: Production
-      build-command: bun run build
+      artifact-name: b1-dist
       d1-migrations: true
       d1-databases: app-db
       verify-command: curl --fail --silent --show-error https://example.com/api/live
     secrets: inherit
 ```
 
-`deploy-cli` defaults to `wrangler`; existing callers keep their named D1 databases, `--remote`, optional `wrangler-config` / `wrangler-working-directory`, and default `deploy` command. `wrangler-version` defaults to `lockfile`, which reads the exact version from `bun.lock`, `package-lock.json`, `pnpm-lock.yaml`, and/or `yarn.lock` under `working-directory` and requires every present lockfile to agree. Omit the input or set `wrangler-version: lockfile` to stop hand-pinning Wrangler on every bump. An explicit semver pin remains supported and unchanged when shared steps use Wrangler.
+## Worker releases (`deploy-worker.yml`)
 
-For a cf-only project, replace the Wrangler inputs with:
+Prefer `artifact-name` (and optional `artifact-path` / `artifact-unpack-command`) so `D2: Artifact` consumes the same-run `B1` output directly without re-running `build-command`. Pass `sparse-checkout` on heavy-asset repositories to trim `D1` checkout. `verify-command` is mandatory (`D5: Verify`). `deploy-cli` defaults to `wrangler` (`wrangler-version: lockfile`); `cf` projects set `deploy-cli: cf`, pinned `cf-version`, `working-directory`, and database UUIDs in `d1-databases`. Use `deploy-env` (`KEY=VALUE`) and `deploy-secret-name` + `DEPLOY_SECRET` when a custom script needs non-Cloudflare configuration vars.
 
-```yaml
-with:
-  source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
-  package-manager: npm
-  node-version: '26.12.1'
-  deploy-cli: cf
-  cf-version: '1.0.0-beta.12'
-  build-command: npm run build
-  d1-migrations: true
-  d1-databases: 00000000-1234-5678-abcd-000000000001
-  verify-command: curl --fail --silent --show-error https://example.com/api/live
-```
+## Docker releases (`deploy-docker.yml`)
 
-Replace the example UUID with the production database ID. Pin `cf` in the project's dependency manifest and lockfile and commit `cloudflare.config.ts`. `cf-version` must exactly match the local binary, including prerelease suffixes. Shared cf steps never install, locate or invoke Wrangler. `working-directory` selects the cf project; Wrangler-specific path inputs are rejected for cf.
+`docker-manifest` normalizes each entry in `images` with `cacheScope` (`<repo>-<service>` by default or explicit `cache-scope`), matching CI `P1`'s `type=gha,scope=...` BuildKit cache. Set `deploy-over-ssh: false` for GHCR push-only repositories (`D1` -> `D2` + registry `D5`); keep the default `deploy-over-ssh: true` with `deploy-directory`, `remote-verify-command`, and `verify-command` (plus optional `tailscale: true`) for SSH Compose `@sha256` deployments.
 
-The build command must generate `.cloudflare/output` from the proven checkout. The default cf deployment is `cf deploy --prebuilt --mode production`: it does not rebuild or run automatic configuration. Build and deploy modes must match. Set `deploy-command: deploy --prebuilt --mode staging` for a build explicitly created with staging mode; the GitHub `environment` name does not set the cf mode. See [cf in CI](https://developers.cloudflare.com/cf/ci/) and [prebuilt deployment](https://developers.cloudflare.com/cf/projects/#deploy-a-prebuilt-build).
+## GitHub Pages releases (`deploy-pages.yml`)
 
-For cf, `d1-databases` accepts database UUIDs, not names or bindings, and migrations are remote without a `--remote` flag. The default migration directory is `./migrations`. Use `d1-command: d1 migrations apply UUID --dir drizzle --pattern */migration.sql --table custom` for a custom layout; it replaces the database loop and is passed to the selected local CLI. `deploy-command` and `d1-command` are whitespace-separated CLI arguments, not shell scripts; globs remain literal. Use a project script for shell quoting or compound commands. cf does not read Wrangler migration settings; see the [migration reference](https://developers.cloudflare.com/cf/wrangler/reference/).
-
-`deploy-script` invokes an existing complete project release command instead of the shared deploy command. With shared `d1-migrations: false` (the default), neither CLI version nor binary is required or checked; the script owns its toolchain. With shared migrations enabled, the selected CLI and its exact version are still required for migrations, followed by the project script. A deployment holds a non-cancelling lock for its production environment.
-
-GitHub environment names are exact and case-sensitive. The called deployment job selects the environment and reads `CLOUDFLARE_API_TOKEN` from environment secrets and `CLOUDFLARE_ACCOUNT_ID` from environment variables (`vars.CLOUDFLARE_ACCOUNT_ID`). CI jobs do not need production deployment credentials.
-
-This workflow rebuilds the proven source. Projects promoting already tested artifacts keep their artifact identity/digest validation in a small adapter using the shared source and setup actions. A warning-only artifact download is not a replacement for that validation.
-
-## Docker releases
-
-Use the same trigger and source inputs with `deploy-docker.yml`, then provide:
-
-```yaml
-with:
-  source-run-id: ${{ format('{0}', github.event.workflow_run.id) }}
-  environment: app / production
-  images: '[{"image":"ghcr.io/nocoo/app-web","service":"web","build-args":"APP=web"},{"image":"ghcr.io/nocoo/app-admin","service":"admin","build-args":"APP=admin"}]'
-  deploy-directory: /opt/app
-  remote-verify-command: ./verify-containers.sh
-  verify-command: ./scripts/verify-production.sh
-```
-
-The caller needs `contents: read`, `actions: read` and `packages: write`. Credentials are `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, optional `VPS_PORT`/`VPS_KNOWN_HOSTS`, and `GHCR_PULL_USER`/`GHCR_PULL_TOKEN`. `BUILD_ARGS` carries additional caller build arguments. The `Verify deployed service` step exposes environment variables `DEPLOY_PHASE`, `DEPLOY_URL`, and `DEPLOY_ORIGIN_MARKER` (`vars.DEPLOY_*`) from the selected deployment environment.
-
-### Tailscale before SSH (optional)
-
-When the deploy host is reachable only on a tailnet (for example after blocking public SSH from GitHub-hosted runners), opt in with `tailscale: true`. The deploy job joins the tailnet using [Tailscale workload identity federation](https://tailscale.com/docs/integrations/github/github-action) (`tailscale/github-action@v4`, pinned to a full commit SHA in `deploy-docker.yml`), then uses the same OpenSSH + deploy key path as today. Tailscale SSH (`--ssh`) is not enabled.
-
-Out of band (Tailscale admin console): create a federated identity with `auth_keys` scope, define tags (for example `tag:ci`) and ACL rules that allow `tag:ci` to reach the deploy host on the SSH port. Map the federated identity **client ID** and **audience** into GitHub secrets named `TS_OAUTH_CLIENT_ID` and `TS_AUDIENCE` (Tailscale’s documented names; federation uses `audience`, not `TS_OAUTH_SECRET`).
-
-Pass those secrets through `workflow_call` and set `VPS_HOST` to the host’s Tailscale IP or MagicDNS short name (for example `100.101.0.2` or `jp2`). Default ephemeral node tags are `tag:ci` (`tailscale-tags` input). Optional `tailscale-ping` is a comma-separated peer list; when empty, the workflow pings `VPS_HOST` after join.
-
-`VPS_KNOWN_HOSTS` should include the key for the hostname or IP you pass as `VPS_HOST`. Refresh with `ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST"` from a machine that can reach the host, then update the secret.
-
-Example caller fragment (bump `BASE_CI_SHA` after upgrading base-ci):
-
-```yaml
-jobs:
-  release:
-    uses: nocoo/base-ci/.github/workflows/deploy-docker.yml@BASE_CI_SHA
-    secrets:
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-      VPS_PORT: ${{ secrets.VPS_PORT }}
-      VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
-      GHCR_PULL_USER: ${{ secrets.GHCR_PULL_USER }}
-      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
-    with:
-      tailscale: true
-      # tailscale-tags: tag:ci
-      # tailscale-ping: jp2,100.101.0.2
-      environment: app / production
-      images: '[...]'
-      deploy-directory: /opt/app
-      remote-verify-command: ./verify-containers.sh
-      verify-command: ./scripts/verify-production.sh
-```
-
-Callers that do not set `tailscale: true` behave as before and do not need Tailscale secrets. The deploy job requests `id-token: write` so federation can obtain a GitHub OIDC token when Tailscale is enabled.
-
-Every image has the proven source SHA as its tag and OCI revision. A release manifest must contain exactly one valid digest for every requested image/service, all from that same source. On the server, the workflow reads the actual Compose configuration, overrides only the selected images with digests, pulls them serially and recreates those services. It preserves other service settings and project health checks. Successful manifests are recorded in `.base-ci-releases/<SHA>.json`; a temporary effective Compose file is removed after use. The server needs Python 3 and Docker Compose v2.
+Use `deploy-pages.yml` on `main` push (no tag/release gate) with `artifact-name`, `artifact-path` / `source-path` (optional `prepare-command` and `node-version`), and `verify-url` / `verify-command` for `D5: Verify`. Requires `pages: write` and `id-token: write` on the calling workflow or job.
 
 ## Verification and upgrades
 

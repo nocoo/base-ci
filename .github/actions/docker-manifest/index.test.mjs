@@ -13,7 +13,11 @@ const records = images.map(({ service, image }, i) => ({
 
 test('releases both images with exact source and digests, independent of completion order', () => {
   assert.deepEqual(collectManifest(images, sha, [...records].reverse()), records);
-  assert.equal(validateImages(images, sha)[0].file, 'Dockerfile');
+  const validated = validateImages(images, sha, 'nocoo/ellie');
+  assert.equal(validated[0].file, 'Dockerfile');
+  assert.equal(validated[0].cacheScope, 'ellie-web');
+  assert.equal(validated[1].cacheScope, 'ellie-admin');
+  assert.equal(validateImages([{ ...images[0], 'cache-scope': 'custom-scope' }], sha, 'nocoo/ellie')[0].cacheScope, 'custom-scope');
 });
 
 test('rejects partial, duplicate and unexpected build results', () => {

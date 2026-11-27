@@ -1,5 +1,9 @@
 # Changelog
 
+## v2026.23 - 2026-11-27
+
+- Fix `D5: Verify` `curl: (23)` SIGPIPE under `set -euo pipefail` in `.github/workflows/deploy-pages.yml` by writing the fetched HTML to a temporary file before `grep -qiE`.
+
 ## v2026.22 - 2026-11-27
 
 - Fix `actions/deploy-pages` artifact metadata race in `.github/workflows/deploy-pages.yml` by granting explicit `actions: read` permission and waiting up to 30s for `github-pages` artifact indexing immediately after `actions/upload-pages-artifact`.

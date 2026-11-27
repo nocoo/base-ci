@@ -192,9 +192,12 @@ jobs:
                 exit 0
               fi
             else
-              if [ -n "$VERIFY_URL" ] && curl -fsSL "$VERIFY_URL" | grep -qiE '<html|<!doctype'; then
+              body_file=$(mktemp)
+              if [ -n "$VERIFY_URL" ] && curl -fsSL "$VERIFY_URL" -o "$body_file" && grep -qiE '<html|<!doctype' "$body_file"; then
+                rm -f "$body_file"
                 exit 0
               fi
+              rm -f "$body_file"
             fi
             if [ "$i" -eq "$retries" ]; then
               echo "::error::Pages verify failed after $retries attempts"

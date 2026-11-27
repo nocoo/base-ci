@@ -117,7 +117,7 @@ jobs:
             fi
           fi
       - id: plan
-        uses: nocoo/base-ci/.github/actions/docker-manifest@bb6d891f49960164dccaf78d198660a5a7892385
+        uses: nocoo/base-ci/.github/actions/docker-manifest@617779398889d48f867f463b05ffd0b7561376d3
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ github.sha }}
@@ -244,7 +244,7 @@ jobs:
           path: base-ci-digests
           merge-multiple: true
       - id: manifest
-        uses: nocoo/base-ci/.github/actions/docker-manifest@bb6d891f49960164dccaf78d198660a5a7892385
+        uses: nocoo/base-ci/.github/actions/docker-manifest@617779398889d48f867f463b05ffd0b7561376d3
         with:
           images: ${{ inputs.images }}
           source-sha: ${{ needs.d1-preflight.outputs.sha }}
@@ -269,7 +269,7 @@ jobs:
           echo '::error::SSH host is unreachable'
           exit 1
       - name: Deploy verified images
-        uses: nocoo/base-ci/.github/actions/ssh-deploy@bb6d891f49960164dccaf78d198660a5a7892385
+        uses: nocoo/base-ci/.github/actions/ssh-deploy@617779398889d48f867f463b05ffd0b7561376d3
         env:
           IMAGE_SHA: ${{ needs.d1-preflight.outputs.sha }}
           RELEASE_IMAGES: ${{ steps.manifest.outputs.release-images }}

@@ -1,5 +1,5 @@
 # Reusable Workers deployment (D1-D5, same-run quality-gated). Pin callers to a full commit SHA.
-# Internal composite: nocoo/base-ci/.github/actions/setup-js@bb6d891f49960164dccaf78d198660a5a7892385 (see .github/internal-provider-pin.txt)
+# Internal composite: nocoo/base-ci/.github/actions/setup-js@617779398889d48f867f463b05ffd0b7561376d3 (see .github/internal-provider-pin.txt)
 # Do not change internal pins to relative paths (caller checkout is consumer source).
 
 name: Deploy Worker
@@ -354,12 +354,12 @@ jobs:
           (inputs.wrangler-version == '' || inputs.wrangler-version == 'lockfile') &&
           (inputs.deploy-script == '' || inputs.d1-migrations)
         id: locked-wrangler
-        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@bb6d891f49960164dccaf78d198660a5a7892385
+        uses: nocoo/base-ci/.github/actions/resolve-locked-wrangler@617779398889d48f867f463b05ffd0b7561376d3
         with:
           working-directory: ${{ steps.paths.outputs.working-directory }}
 
       - name: "D1: Preflight — Setup JS"
-        uses: nocoo/base-ci/.github/actions/setup-js@bb6d891f49960164dccaf78d198660a5a7892385
+        uses: nocoo/base-ci/.github/actions/setup-js@617779398889d48f867f463b05ffd0b7561376d3
         with:
           package-manager: ${{ inputs.package-manager }}
           runtime-version: ${{ inputs.runtime-version }}

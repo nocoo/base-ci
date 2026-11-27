@@ -26,6 +26,10 @@ inputs:
     description: "Newline or comma-separated list of extra directories needing install"
     required: false
     default: ""
+  cache:
+    description: "Cache pnpm store with actions/cache when package-manager is pnpm (true/false)"
+    required: false
+    default: "true"
 
 outputs:
   effective-runtime-version:
@@ -79,6 +83,29 @@ runs:
       run: |
         npm install --global --ignore-scripts "npm@$NPM_VERSION"
         test "$(npm --version)" = "$NPM_VERSION"
+
+    - name: Resolve pnpm store path and lock hash
+      id: pnpm-store
+      if: inputs.package-manager == 'pnpm' && inputs.cache == 'true'
+      shell: bash
+      env:
+        IN_WORKDIR: ${{ inputs.working-directory }}
+        IN_EXTRA_DIRS: ${{ inputs.extra-install-dirs }}
+      run: |
+        set -euo pipefail
+        store_path="$(pnpm store path --silent 2>/dev/null || pnpm store path)"
+        store_path="$(printf '%s\n' "$store_path" | awk 'NF { last=$0 } END { print last }')"
+        echo "store-path=$store_path" >> "$GITHUB_OUTPUT"
+        python3 "${{ github.action_path }}/setup_js_core.py" pnpm-lock-hash
+
+    - name: Cache pnpm store
+      if: inputs.package-manager == 'pnpm' && inputs.cache == 'true' && steps.pnpm-store.outputs.store-path != '' && steps.pnpm-store.outputs.lock-hash != 'none'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.store-path }}
+        key: ${{ runner.os }}-pnpm-store-${{ steps.resolve-runtime.outputs.effective-runtime-version }}-${{ steps.pnpm-store.outputs.lock-hash }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-${{ steps.resolve-runtime.outputs.effective-runtime-version }}-
 
     - name: Install dependencies across root and extra directories
       shell: bash

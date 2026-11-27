@@ -8,6 +8,7 @@ from setup_js_core import (
     resolve_runtimes,
     normalize_and_validate_dir,
     collect_install_dirs,
+    compute_pnpm_lock_hash,
     validate_trusted_policy,
     get_install_command,
 )
@@ -101,6 +102,27 @@ class TestSetupJsCore(unittest.TestCase):
 
             cmd_trusted = get_install_command(tmpdir, "bun", "trusted")
             self.assertEqual(cmd_trusted, ["bun", "install", "--frozen-lockfile"])
+
+    def test_compute_pnpm_lock_hash(self):
+        with tempfile.TemporaryDirectory() as repo_root:
+            self.assertEqual(compute_pnpm_lock_hash(".", "", repo_root), "none")
+            with open(os.path.join(repo_root, "pnpm-lock.yaml"), "w") as f:
+                f.write("lockfileVersion: '9.0'\n")
+            h1 = compute_pnpm_lock_hash(".", "", repo_root)
+            h2 = compute_pnpm_lock_hash(".", "", repo_root)
+            self.assertEqual(h1, h2)
+            self.assertEqual(len(h1), 64)
+
+            os.makedirs(os.path.join(repo_root, "apps/web"))
+            with open(os.path.join(repo_root, "apps/web/pnpm-lock.yaml"), "w") as f:
+                f.write("lockfileVersion: '9.0'\npackages: {}\n")
+            h3 = compute_pnpm_lock_hash(".", "apps/web", repo_root)
+            self.assertNotEqual(h1, h3)
+
+            with open(os.path.join(repo_root, "pnpm-lock.yaml"), "w") as f:
+                f.write("lockfileVersion: '9.1'\n")
+            h4 = compute_pnpm_lock_hash(".", "apps/web", repo_root)
+            self.assertNotEqual(h3, h4)
 
 if __name__ == "__main__":
     unittest.main()

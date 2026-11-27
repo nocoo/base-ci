@@ -5,6 +5,7 @@ Handles runtime version resolution, install policy verification,
 lockfile checking, path traversal validation, and install command construction.
 """
 
+import hashlib
 import os
 import sys
 import json
@@ -138,6 +139,24 @@ def collect_install_dirs(workdir: str, extra_input: str, repo_root: str = ".") -
     # Portable deduplication preserving order
     return list(dict.fromkeys(dirs))
 
+
+def compute_pnpm_lock_hash(workdir: str, extra_input: str, repo_root: str = ".") -> str:
+    """Return a deterministic SHA-256 hash across all declared pnpm-lock.yaml files, or 'none'."""
+    dirs = sorted(collect_install_dirs(workdir, extra_input, repo_root))
+    hasher = hashlib.sha256()
+    found = False
+    for d in dirs:
+        lock_path = os.path.join(repo_root, d, "pnpm-lock.yaml")
+        if os.path.isfile(lock_path):
+            found = True
+            hasher.update(d.encode("utf-8"))
+            hasher.update(b"\0")
+            with open(lock_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    hasher.update(chunk)
+            hasher.update(b"\0")
+    return hasher.hexdigest() if found else "none"
+
 def validate_trusted_policy(dir_path: str, pkg_mgr: str) -> List[str]:
     """
     Validates trustedDependencies for Bun.
@@ -252,8 +271,18 @@ def main():
                 sys.exit(res.returncode)
             print("::endgroup::")
 
+    elif mode == "pnpm-lock-hash":
+        workdir = os.environ.get("IN_WORKDIR", ".")
+        extra_input = os.environ.get("IN_EXTRA_DIRS", "").strip()
+        lock_hash = compute_pnpm_lock_hash(workdir, extra_input, ".")
+        github_output = os.environ.get("GITHUB_OUTPUT")
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as f:
+                f.write(f"lock-hash={lock_hash}\n")
+        print(f"Resolved pnpm lock hash: {lock_hash}")
+
     else:
-        sys.stderr.write(f"Unknown mode '{mode}'. Use 'resolve' or 'install'.\n")
+        sys.stderr.write(f"Unknown mode '{mode}'. Use 'resolve', 'install', or 'pnpm-lock-hash'.\n")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -1,5 +1,9 @@
 # Changelog
 
+## v2026.24 - 2026-11-27
+
+- Split `.github/workflows/deploy-pages.yml` into `d2-artifact` (`D1`–`D2`) -> `d4-deploy` (`D4`–`D5`) jobs with consecutive artifact indexing checks so `actions/deploy-pages` reliably observes `github-pages` across GitHub Actions read replicas.
+
 ## v2026.23 - 2026-11-27
 
 - Fix `D5: Verify` `curl: (23)` SIGPIPE under `set -euo pipefail` in `.github/workflows/deploy-pages.yml` by writing the fetched HTML to a temporary file before `grep -qiE`.

@@ -97,8 +97,11 @@ jobs:
           pinputs = pon['workflow_call']['inputs']
           assert pinputs['environment']['default'] == 'github-pages'
           assert 'artifact-name' in pinputs and 'source-path' in pinputs
-          pjob = pwf['jobs']['deploy']
+          for job_id in ('d2-artifact', 'd4-deploy'):
+              assert job_id in pwf['jobs'], job_id
+          pjob = pwf['jobs']['d4-deploy']
           assert pjob['concurrency']['cancel-in-progress'] is False
+          assert pjob['needs'] == ['d2-artifact']
           puses = [step.get('uses', '') for step in pjob['steps'] if isinstance(step, dict)]
           assert any(item.startswith('actions/deploy-pages@') for item in puses)
 
